@@ -12,6 +12,7 @@ import (
 	"os"
 	"os/exec"
 	"path"
+	"strings"
 
 	"github.com/spf13/cobra"
 )
@@ -31,16 +32,31 @@ func Execute() {
 func main(cmd *cobra.Command, args []string) {
 	fmt.Println("main called")
 
-	f, err := os.Open(args[0])
+	fnIn := args[0]
+
+	fIn, err := os.Open(fnIn)
 	if err != nil {
 		log.Fatal(err)
 	}
 
-	remoteEdit(f)
+	remoteEdit(path.Base(fnIn), fIn)
+}
+
+func getEditor() []string {
+	editor := os.Getenv("EDITOR")
+	if editor == "" {
+		editor = "vim"
+	}
+
+	return strings.Fields(editor)
 }
 
 func runEditor(fn string) {
-	cmd := exec.Command("vim", fn)
+	editor := getEditor()
+
+	editCmd := append(editor, fn)
+
+	cmd := exec.Command(editCmd[0], editCmd[1:]...)
 	cmd.Stdin = os.Stdin
 	cmd.Stdout = os.Stdout
 
@@ -49,14 +65,14 @@ func runEditor(fn string) {
 	}
 }
 
-func remoteEdit(src io.Reader) {
+func remoteEdit(baseName string, src io.Reader) {
 	tmpDirName, err := ioutil.TempDir("", "remote-edit-*")
 	if err != nil {
 		log.Fatal(err)
 	}
 	defer os.RemoveAll(tmpDirName)
 
-	tmpFileName := path.Join(tmpDirName, "tmp-file")
+	tmpFileName := path.Join(tmpDirName, baseName)
 
 	w, err := os.Create(tmpFileName)
 	if err != nil {
