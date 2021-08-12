@@ -14,6 +14,8 @@ import (
 	"path"
 	"strings"
 
+	"techiecaro.com/remote-edit/storage"
+
 	"github.com/spf13/cobra"
 )
 
@@ -34,10 +36,7 @@ func main(cmd *cobra.Command, args []string) {
 
 	fnIn := args[0]
 
-	fIn, err := os.Open(fnIn)
-	if err != nil {
-		log.Fatal(err)
-	}
+	fIn := storage.GetFileStorage(fnIn)
 
 	remoteEdit(path.Base(fnIn), fIn)
 }
