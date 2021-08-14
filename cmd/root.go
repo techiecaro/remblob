@@ -5,6 +5,8 @@ Copyright © 2021 Karol Duleba <karolduleba@gmail.com>
 package cmd
 
 import (
+	"bytes"
+	"crypto/md5"
 	"fmt"
 	"io"
 	"io/ioutil"
@@ -65,6 +67,18 @@ func runEditor(fn string) {
 	}
 }
 
+func getHash(stream io.ReadSeeker) ([]byte, error) {
+	stream.Seek(0, io.SeekStart)
+
+	h := md5.New()
+	if _, err := io.Copy(h, stream); err != nil {
+		return nil, err
+	}
+
+	stream.Seek(0, io.SeekStart)
+	return h.Sum(nil), nil
+}
+
 func remoteEdit(baseName string, src io.ReadCloser, dst io.WriteCloser) {
 	tmpDirName, err := ioutil.TempDir("", "remote-edit-*")
 	if err != nil {
@@ -90,10 +104,14 @@ func remoteEdit(baseName string, src io.ReadCloser, dst io.WriteCloser) {
 	src.Close()
 
 	// User editing the file
+	startHash, err := getHash(tmp)
 	runEditor(tmpFileName)
+	endHash, err := getHash(tmp)
 
-	// Move to the begging of the file
-	tmp.Seek(0, io.SeekStart)
+	if bytes.Equal(startHash, endHash) {
+		log.Printf("No change to input, not writing to the destination")
+		return
+	}
 
 	// Copy the temp destination to dst
 	if n, err := io.Copy(dst, tmp); err != nil {
