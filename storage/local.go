@@ -1,7 +1,6 @@
 package storage
 
 import (
-	"io"
 	"os"
 )
 
@@ -19,19 +18,25 @@ func getLocalFileStorage(uri string) *localFileStorage {
 
 func (l *localFileStorage) Read(p []byte) (n int, err error) {
 	if l.localFile == nil {
-		file, err := os.Open(l.uri)
+		file, err := os.OpenFile(l.uri, os.O_RDONLY, 0755)
 		if err != nil {
 			return 0, err
 		}
 		l.localFile = file
 	}
 
-	bytes, err := l.localFile.Read(p)
-	if err == io.EOF {
-		l.Close()
-	}
+	return l.localFile.Read(p)
+}
 
-	return bytes, err
+func (l *localFileStorage) Write(p []byte) (n int, err error) {
+	if l.localFile == nil {
+		file, err := os.OpenFile(l.uri, os.O_RDWR|os.O_CREATE, 0755)
+		if err != nil {
+			return 0, err
+		}
+		l.localFile = file
+	}
+	return l.localFile.Write(p)
 }
 
 func (l *localFileStorage) Close() error {
