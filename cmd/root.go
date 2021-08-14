@@ -64,7 +64,7 @@ func runEditor(fn string) {
 	}
 }
 
-func remoteEdit(baseName string, src io.Reader) {
+func remoteEdit(baseName string, src io.ReadCloser) {
 	tmpDirName, err := ioutil.TempDir("", "remote-edit-*")
 	if err != nil {
 		log.Fatal(err)
@@ -85,6 +85,8 @@ func remoteEdit(baseName string, src io.Reader) {
 		panic(err)
 	}
 	log.Printf("Copied %v bytes\n", n)
+	// Copy is made, close the source
+	src.Close()
 
 	runEditor(tmpFileName)
 
