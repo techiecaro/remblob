@@ -37,8 +37,9 @@ func main(cmd *cobra.Command, args []string) {
 	fnIn := args[0]
 
 	fIn := storage.GetFileStorage(fnIn)
+	fOut := storage.GetFileStorage(fnIn)
 
-	remoteEdit(path.Base(fnIn), fIn)
+	remoteEdit(path.Base(fnIn), fIn, fOut)
 }
 
 func getEditor() []string {
@@ -64,7 +65,7 @@ func runEditor(fn string) {
 	}
 }
 
-func remoteEdit(baseName string, src io.ReadCloser) {
+func remoteEdit(baseName string, src io.ReadCloser, dst io.WriteCloser) {
 	tmpDirName, err := ioutil.TempDir("", "remote-edit-*")
 	if err != nil {
 		log.Fatal(err)
@@ -73,22 +74,35 @@ func remoteEdit(baseName string, src io.ReadCloser) {
 
 	tmpFileName := path.Join(tmpDirName, baseName)
 
-	w, err := os.Create(tmpFileName)
+	tmp, err := os.Create(tmpFileName)
 	if err != nil {
 		log.Fatal(err)
 	}
-	defer w.Close()
+	defer tmp.Close()
 
 	// Copy the src to temp destination
-	n, err := io.Copy(w, src)
-	if err != nil {
+	if n, err := io.Copy(tmp, src); err != nil {
 		panic(err)
+	} else {
+		log.Printf("Copied %v bytes to temp\n", n)
 	}
-	log.Printf("Copied %v bytes\n", n)
 	// Copy is made, close the source
 	src.Close()
 
+	// User editing the file
 	runEditor(tmpFileName)
+
+	// Move to the begging of the file
+	tmp.Seek(0, io.SeekStart)
+
+	// Copy the temp destination to dst
+	if n, err := io.Copy(dst, tmp); err != nil {
+		panic(err)
+	} else {
+		log.Printf("Copied %v bytes to final destination\n", n)
+	}
+	// Copy is made, close the source
+	dst.Close()
 
 	fmt.Println("Temp dir name:", tmpFileName)
 }
