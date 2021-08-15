@@ -41,7 +41,9 @@ func main(cmd *cobra.Command, args []string) {
 	fIn := storage.GetFileStorage(fnIn)
 	fOut := storage.GetFileStorage(fnIn)
 
-	remoteEdit(path.Base(fnIn), fIn, fOut)
+	if err := remoteEdit(path.Base(fnIn), fIn, fOut); err != nil {
+		log.Fatal(err)
+	}
 }
 
 func getEditor() []string {
@@ -53,7 +55,7 @@ func getEditor() []string {
 	return strings.Fields(editor)
 }
 
-func runEditor(fn string) {
+func runEditor(fn string) error {
 	editor := getEditor()
 
 	editCmd := append(editor, fn)
@@ -62,9 +64,7 @@ func runEditor(fn string) {
 	cmd.Stdin = os.Stdin
 	cmd.Stdout = os.Stdout
 
-	if err := cmd.Run(); err != nil {
-		log.Fatal(err)
-	}
+	return cmd.Run()
 }
 
 func getHash(stream io.ReadSeeker) ([]byte, error) {
@@ -79,10 +79,10 @@ func getHash(stream io.ReadSeeker) ([]byte, error) {
 	return h.Sum(nil), nil
 }
 
-func remoteEdit(baseName string, src io.ReadCloser, dst io.WriteCloser) {
+func remoteEdit(baseName string, src io.ReadCloser, dst io.WriteCloser) error {
 	tmpDirName, err := ioutil.TempDir("", "remote-edit-*")
 	if err != nil {
-		log.Fatal(err)
+		return err
 	}
 	defer os.RemoveAll(tmpDirName)
 
@@ -90,37 +90,40 @@ func remoteEdit(baseName string, src io.ReadCloser, dst io.WriteCloser) {
 
 	tmp, err := os.Create(tmpFileName)
 	if err != nil {
-		log.Fatal(err)
+		return err
 	}
 	defer tmp.Close()
 
 	// Copy the src to temp destination
-	if n, err := io.Copy(tmp, src); err != nil {
-		panic(err)
-	} else {
-		log.Printf("Copied %v bytes to temp\n", n)
+	if _, err := io.Copy(tmp, src); err != nil {
+		return err
 	}
 	// Copy is made, close the source
 	src.Close()
 
 	// User editing the file
 	startHash, err := getHash(tmp)
-	runEditor(tmpFileName)
+	if err != nil {
+		return err
+	}
+	if err := runEditor(tmpFileName); err != nil {
+		return err
+	}
 	endHash, err := getHash(tmp)
 
 	if bytes.Equal(startHash, endHash) {
 		log.Printf("No change to input, not writing to the destination")
-		return
+		return nil
 	}
 
+	tmp.Seek(0, io.SeekStart)
+
 	// Copy the temp destination to dst
-	if n, err := io.Copy(dst, tmp); err != nil {
-		panic(err)
-	} else {
-		log.Printf("Copied %v bytes to final destination\n", n)
+	if _, err := io.Copy(dst, tmp); err != nil {
+		return err
 	}
 	// Copy is made, close the source
 	dst.Close()
 
-	fmt.Println("Temp dir name:", tmpFileName)
+	return nil
 }
