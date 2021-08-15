@@ -35,6 +35,7 @@ func (l *localFileStorage) Write(p []byte) (n int, err error) {
 			return 0, err
 		}
 		l.localFile = file
+		l.localFile.Truncate(0)
 	}
 	return l.localFile.Write(p)
 }
