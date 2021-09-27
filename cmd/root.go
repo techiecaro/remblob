@@ -99,7 +99,9 @@ func remoteEdit(baseName string, src io.ReadCloser, dst io.WriteCloser) error {
 		return err
 	}
 	// Copy is made, close the source
-	src.Close()
+	if err := src.Close(); err != nil {
+		return err
+	}
 
 	// User editing the file
 	startHash, err := getHash(tmp)
@@ -123,7 +125,9 @@ func remoteEdit(baseName string, src io.ReadCloser, dst io.WriteCloser) error {
 		return err
 	}
 	// Copy is made, close the source
-	dst.Close()
+	if err := dst.Close(); err != nil {
+		return err
+	}
 
 	return nil
 }
