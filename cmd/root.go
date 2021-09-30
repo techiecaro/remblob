@@ -1,11 +1,13 @@
+package cmd
+
 /*
 Copyright © 2021 Karol Duleba <karolduleba@gmail.com>
 
 */
-package cmd
 
 import (
 	"bytes"
+	"compress/gzip"
 	"crypto/md5"
 	"fmt"
 	"io"
@@ -87,6 +89,7 @@ func remoteEdit(baseName string, src io.ReadCloser, dst io.WriteCloser) error {
 	defer os.RemoveAll(tmpDirName)
 
 	tmpFileName := path.Join(tmpDirName, baseName)
+	isCompressed := getIsCompressed(baseName)
 
 	tmp, err := os.Create(tmpFileName)
 	if err != nil {
@@ -94,12 +97,7 @@ func remoteEdit(baseName string, src io.ReadCloser, dst io.WriteCloser) error {
 	}
 	defer tmp.Close()
 
-	// Copy the src to temp destination
-	if _, err := io.Copy(tmp, src); err != nil {
-		return err
-	}
-	// Copy is made, close the source
-	if err := src.Close(); err != nil {
+	if err := copyFile(tmp, src, true, isCompressed); err != nil {
 		return err
 	}
 
@@ -112,7 +110,11 @@ func remoteEdit(baseName string, src io.ReadCloser, dst io.WriteCloser) error {
 		return err
 	}
 	endHash, err := getHash(tmp)
+	if err != nil {
+		return err
+	}
 
+	// If nothing changed, don't write to final destination
 	if bytes.Equal(startHash, endHash) {
 		log.Printf("No change to input, not writing to the destination")
 		return nil
@@ -120,13 +122,58 @@ func remoteEdit(baseName string, src io.ReadCloser, dst io.WriteCloser) error {
 
 	tmp.Seek(0, io.SeekStart)
 
-	// Copy the temp destination to dst
-	if _, err := io.Copy(dst, tmp); err != nil {
+	// Write to final destination
+	if err := copyFile(dst, tmp, false, isCompressed); err != nil {
 		return err
 	}
-	// Copy is made, close the source
-	if err := dst.Close(); err != nil {
+
+	return nil
+}
+
+func getIsCompressed(filename string) bool {
+	return path.Ext(filename) == ".gz"
+}
+
+func copyFile(dst io.WriteCloser, src io.ReadCloser, input bool, compressed bool) error {
+	// Copy the temp destination to dst
+	finalSrc := src
+	finalDst := dst
+
+	if compressed {
+		if input {
+			decompressedReader, err := gzip.NewReader(src)
+			if err != nil {
+				return err
+			}
+			finalSrc = decompressedReader
+		} else {
+			compressionWriter := gzip.NewWriter(dst)
+			finalDst = compressionWriter
+		}
+	}
+
+	if _, err := io.Copy(finalDst, finalSrc); err != nil {
 		return err
+	}
+
+	// Copy is made, close the source/destination
+	var toClose []io.Closer
+	if input {
+		if src != finalSrc {
+			toClose = append(toClose, finalSrc)
+		}
+		toClose = append(toClose, src)
+	} else {
+		if dst != finalDst {
+			toClose = append(toClose, finalDst)
+		}
+		toClose = append(toClose, dst)
+	}
+
+	for _, closer := range toClose {
+		if err := closer.Close(); err != nil {
+			return err
+		}
 	}
 
 	return nil
