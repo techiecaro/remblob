@@ -1,6 +1,7 @@
 package storage
 
 import (
+	"net/url"
 	"os"
 )
 
@@ -9,9 +10,9 @@ type localFileStorage struct {
 	localFile *os.File
 }
 
-func getLocalFileStorage(uri string) *localFileStorage {
+func getLocalFileStorage(uri url.URL) *localFileStorage {
 	fs := new(localFileStorage)
-	fs.uri = uri
+	fs.uri = uri.String()
 	fs.localFile = nil
 	return fs
 }

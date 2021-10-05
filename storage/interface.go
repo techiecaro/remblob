@@ -11,16 +11,12 @@ type FileStorage interface {
     Close() error
 }
 
-func GetFileStorage(uri string) FileStorage {
-    parsedURL, err := url.Parse(uri)
-    if err != nil {
-        panic(err)
-    }
-    fmt.Println("Scheme: ", parsedURL.Scheme)
-    fmt.Println("Path: ", parsedURL.Path)
-    fmt.Println("Host: ", parsedURL.Host)
+func GetFileStorage(uri url.URL) FileStorage {
+    fmt.Println("Scheme: ", uri.Scheme)
+    fmt.Println("Path: ", uri.Path)
+    fmt.Println("Host: ", uri.Host)
 
-    switch parsedURL.Scheme {
+    switch uri.Scheme {
     case "":
         return getLocalFileStorage(uri)
     case "s3":

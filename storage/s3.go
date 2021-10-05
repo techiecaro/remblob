@@ -22,12 +22,7 @@ type s3FileStorage struct {
 	writeBuff *bytes.Buffer
 }
 
-func getS3FileStorage(uri string) *s3FileStorage {
-	parsedURL, err := url.Parse(uri)
-	if err != nil {
-		panic(err)
-	}
-
+func getS3FileStorage(uri url.URL) *s3FileStorage {
 	cfg, err := buildS3Config()
 	if err != nil {
 		log.Fatalf("failed to load SDK configuration, %v", err)
@@ -37,8 +32,8 @@ func getS3FileStorage(uri string) *s3FileStorage {
 
 	fs := new(s3FileStorage)
 	fs.client = client
-	fs.bucket = parsedURL.Host
-	fs.key = strings.TrimLeft(parsedURL.Path, "/")
+	fs.bucket = uri.Host
+	fs.key = strings.TrimLeft(uri.Path, "/")
 	fs.readBlob = nil
 	return fs
 }

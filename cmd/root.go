@@ -1,49 +1,26 @@
 package cmd
 
-/*
-Copyright © 2021 Karol Duleba <karolduleba@gmail.com>
-
-*/
-
 import (
 	"bytes"
 	"compress/gzip"
 	"crypto/md5"
-	"fmt"
 	"io"
 	"io/ioutil"
 	"log"
+	"net/url"
 	"os"
 	"os/exec"
 	"path"
 	"strings"
 
-	"techiecaro.com/remote-edit/storage"
-
-	"github.com/spf13/cobra"
+	"techiecaro/remote-edit/storage"
 )
 
-var rootCmd = &cobra.Command{
-	Use:     "remote-edit <remote-file>",
-	Short:   "Edit remote file locally",
-	Example: "remote-edit s3://a-bucket/path/blob.json",
-	Args:    cobra.ExactValidArgs(1),
-	Run:     main,
-}
+func Main(source url.URL, destination url.URL) {
+	fIn := storage.GetFileStorage(source)
+	fOut := storage.GetFileStorage(destination)
 
-func Execute() {
-	cobra.CheckErr(rootCmd.Execute())
-}
-
-func main(cmd *cobra.Command, args []string) {
-	fmt.Println("main called")
-
-	fnIn := args[0]
-
-	fIn := storage.GetFileStorage(fnIn)
-	fOut := storage.GetFileStorage(fnIn)
-
-	if err := remoteEdit(path.Base(fnIn), fIn, fOut); err != nil {
+	if err := remoteEdit(path.Base(source.String()), fIn, fOut); err != nil {
 		log.Fatal(err)
 	}
 }
