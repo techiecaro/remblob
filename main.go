@@ -3,8 +3,9 @@ package main
 import (
 	"net/url"
 
+	"techiecaro/remote-edit/remoteedit"
+
 	"github.com/alecthomas/kong"
-	"techiecaro.com/remote-edit/cmd"
 )
 
 var cli struct {
@@ -26,11 +27,13 @@ func main() {
 		kong.UsageOnError(),
 	)
 
+	editor := remoteedit.NewRemoteEditor()
+
 	switch ctx.Command() {
 	case "<source_path>":
-		cmd.Main(*cli.SourcePath, *cli.SourcePath)
+		editor.Edit(*cli.SourcePath, *cli.SourcePath)
 	case "<source_path> <destination_path>":
-		cmd.Main(*cli.SourcePath, *cli.DestinationPath)
+		editor.Edit(*cli.SourcePath, *cli.DestinationPath)
 	default:
 		panic(ctx.Command())
 	}

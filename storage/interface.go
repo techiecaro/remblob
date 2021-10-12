@@ -1,7 +1,6 @@
 package storage
 
 import (
-    "fmt"
     "net/url"
 )
 
@@ -12,10 +11,6 @@ type FileStorage interface {
 }
 
 func GetFileStorage(uri url.URL) FileStorage {
-    fmt.Println("Scheme: ", uri.Scheme)
-    fmt.Println("Path: ", uri.Path)
-    fmt.Println("Host: ", uri.Host)
-
     switch uri.Scheme {
     case "":
         return getLocalFileStorage(uri)
