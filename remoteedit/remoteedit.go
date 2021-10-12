@@ -71,20 +71,13 @@ func (r RemoteEdit) remoteEdit(baseName string, src io.ReadCloser, dst io.WriteC
 	}
 
 	// User editing the file
-	startHash, err := r.getHash(tmp)
-	if err != nil {
-		return err
-	}
-	if err := r.Editor.Edit(tmpFileName); err != nil {
-		return err
-	}
-	endHash, err := r.getHash(tmp)
+	changes, err := r.localEdit(tmp)
 	if err != nil {
 		return err
 	}
 
 	// If nothing changed, don't write to final destination
-	if bytes.Equal(startHash, endHash) {
+	if changes == false {
 		log.Printf("No change to input, not writing to the destination")
 		return nil
 	}
@@ -95,4 +88,23 @@ func (r RemoteEdit) remoteEdit(baseName string, src io.ReadCloser, dst io.WriteC
 	}
 
 	return nil
+}
+
+func (r RemoteEdit) localEdit(tmp *os.File) (bool, error) {
+	// User editing the file
+	startHash, err := r.getHash(tmp)
+	if err != nil {
+		return false, err
+	}
+	if err := r.Editor.Edit(tmp.Name()); err != nil {
+		return false, err
+	}
+	endHash, err := r.getHash(tmp)
+	if err != nil {
+		return false, err
+	}
+
+	changes := bytes.Equal(startHash, endHash) == false
+
+	return changes, nil
 }
