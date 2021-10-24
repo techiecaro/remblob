@@ -1,13 +1,10 @@
 package remoteedit
 
 import (
-	"bytes"
-	"crypto/md5"
+	"fmt"
 	"io"
-	"io/ioutil"
 	"log"
 	"net/url"
-	"os"
 	"path"
 
 	"techiecaro/remote-edit/editor"
@@ -39,72 +36,33 @@ func (r RemoteEdit) Edit(source url.URL, destination url.URL) {
 	}
 }
 
-func (r RemoteEdit) getHash(stream io.ReadSeeker) ([]byte, error) {
-	stream.Seek(0, io.SeekStart)
-
-	h := md5.New()
-	if _, err := io.Copy(h, stream); err != nil {
-		return nil, err
-	}
-
-	stream.Seek(0, io.SeekStart)
-	return h.Sum(nil), nil
-}
-
 func (r RemoteEdit) remoteEdit(baseName string, src io.ReadCloser, dst io.WriteCloser, shovel shovel.Shovel) error {
-	tmpDirName, err := ioutil.TempDir("", "remote-edit-*")
-	if err != nil {
-		return err
-	}
-	defer os.RemoveAll(tmpDirName)
-
-	tmpFileName := path.Join(tmpDirName, baseName)
-
-	tmp, err := os.Create(tmpFileName)
+	// Create file with nice name, inside temp folder. Close to remove it
+	tmp, err := newNamedTempFile(baseName)
 	if err != nil {
 		return err
 	}
 	defer tmp.Close()
 
-	if err := shovel.CopyIn(tmp, src); err != nil {
+	if err := shovel.CopyIn(tmp.file, src); err != nil {
 		return err
 	}
 
 	// User editing the file
-	changes, err := r.localEdit(tmp)
+	changes, err := localEdit(tmp.file, r.Editor)
 	if err != nil {
 		return err
 	}
-
 	// If nothing changed, don't write to final destination
 	if changes == false {
-		log.Printf("No change to input, not writing to the destination")
+		fmt.Println("No change to input, not writing to the destination")
 		return nil
 	}
 
 	// Write to final destination
-	if err := shovel.CopyOut(dst, tmp); err != nil {
+	if err := shovel.CopyOut(dst, tmp.file); err != nil {
 		return err
 	}
 
 	return nil
-}
-
-func (r RemoteEdit) localEdit(tmp *os.File) (bool, error) {
-	// User editing the file
-	startHash, err := r.getHash(tmp)
-	if err != nil {
-		return false, err
-	}
-	if err := r.Editor.Edit(tmp.Name()); err != nil {
-		return false, err
-	}
-	endHash, err := r.getHash(tmp)
-	if err != nil {
-		return false, err
-	}
-
-	changes := bytes.Equal(startHash, endHash) == false
-
-	return changes, nil
 }
