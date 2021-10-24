@@ -1,4 +1,4 @@
-package remoteedit
+package core
 
 import (
 	"fmt"
@@ -7,9 +7,9 @@ import (
 	"net/url"
 	"path"
 
-	"techiecaro/remote-edit/editor"
-	"techiecaro/remote-edit/shovel"
-	"techiecaro/remote-edit/storage"
+	"techiecaro/remblob/editor"
+	"techiecaro/remblob/shovel"
+	"techiecaro/remblob/storage"
 )
 
 func Edit(source url.URL, destination url.URL) {

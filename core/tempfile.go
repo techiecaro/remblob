@@ -1,4 +1,4 @@
-package remoteedit
+package core
 
 import (
 	"io/ioutil"
@@ -12,7 +12,7 @@ type namedTempFile struct {
 }
 
 func newNamedTempFile(baseName string) (*namedTempFile, error) {
-	tmpDirName, err := ioutil.TempDir("", "remote-edit-*")
+	tmpDirName, err := ioutil.TempDir("", "remblob-*")
 	if err != nil {
 		return nil, err
 	}

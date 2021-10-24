@@ -1,11 +1,11 @@
-package remoteedit
+package core
 
 import (
 	"bytes"
 	"crypto/md5"
 	"io"
 	"os"
-	"techiecaro/remote-edit/editor"
+	"techiecaro/remblob/editor"
 )
 
 func localEdit(tmp *os.File, localEditor editor.Editor) (bool, error) {

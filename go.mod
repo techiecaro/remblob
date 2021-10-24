@@ -1,4 +1,4 @@
-module techiecaro/remote-edit
+module techiecaro/remblob
 
 go 1.16
 

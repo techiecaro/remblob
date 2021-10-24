@@ -3,7 +3,7 @@ package main
 import (
 	"net/url"
 
-	"techiecaro/remote-edit/remoteedit"
+	"techiecaro/remblob/core"
 
 	"github.com/alecthomas/kong"
 )
@@ -16,22 +16,22 @@ var cli struct {
 func main() {
 	ctx := kong.Parse(
 		&cli,
-		kong.Name("remote-edit"),
+		kong.Name("remblob"),
 		kong.Description(`
 			Edit remote file locally.
 
 			Example executions:
-			remote-edit s3://a-bucket/path/blob.json
-			remote-edit blob.json s3://a-bucket/path/blob.json.gz
+			remblob s3://a-bucket/path/blob.json
+			remblob blob.json s3://a-bucket/path/blob.json.gz
 		`),
 		kong.UsageOnError(),
 	)
 
 	switch ctx.Command() {
 	case "<source_path>":
-		remoteedit.Edit(*cli.SourcePath, *cli.SourcePath)
+		core.Edit(*cli.SourcePath, *cli.SourcePath)
 	case "<source_path> <destination_path>":
-		remoteedit.Edit(*cli.SourcePath, *cli.DestinationPath)
+		core.Edit(*cli.SourcePath, *cli.DestinationPath)
 	default:
 		panic(ctx.Command())
 	}
