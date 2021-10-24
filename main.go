@@ -27,13 +27,11 @@ func main() {
 		kong.UsageOnError(),
 	)
 
-	editor := remoteedit.NewRemoteEditor()
-
 	switch ctx.Command() {
 	case "<source_path>":
-		editor.Edit(*cli.SourcePath, *cli.SourcePath)
+		remoteedit.Edit(*cli.SourcePath, *cli.SourcePath)
 	case "<source_path> <destination_path>":
-		editor.Edit(*cli.SourcePath, *cli.DestinationPath)
+		remoteedit.Edit(*cli.SourcePath, *cli.DestinationPath)
 	default:
 		panic(ctx.Command())
 	}

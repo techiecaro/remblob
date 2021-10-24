@@ -12,17 +12,7 @@ import (
 	"techiecaro/remote-edit/storage"
 )
 
-type RemoteEdit struct {
-	Editor editor.Editor
-}
-
-func NewRemoteEditor() RemoteEdit {
-	return RemoteEdit{
-		Editor: editor.EnvEditor{},
-	}
-}
-
-func (r RemoteEdit) Edit(source url.URL, destination url.URL) {
+func Edit(source url.URL, destination url.URL) {
 	src := storage.GetFileStorage(source)
 	dst := storage.GetFileStorage(destination)
 
@@ -31,25 +21,29 @@ func (r RemoteEdit) Edit(source url.URL, destination url.URL) {
 		DestinationCompressed: shovel.IsCompressed(destination.String()),
 	}
 
-	if err := r.remoteEdit(path.Base(source.String()), src, dst, shovel); err != nil {
+	baseName := path.Base(source.String())
+	localEditor := editor.EnvEditor{}
+
+	if err := remoteEdit(baseName, src, dst, shovel, localEditor); err != nil {
 		log.Fatal(err)
 	}
 }
 
-func (r RemoteEdit) remoteEdit(baseName string, src io.ReadCloser, dst io.WriteCloser, shovel shovel.Shovel) error {
-	// Create file with nice name, inside temp folder. Close to remove it
+func remoteEdit(baseName string, src io.ReadCloser, dst io.WriteCloser, shovel shovel.Shovel, localEditor editor.Editor) error {
+	// Create file with a nice name, inside temp folder. Close to remove it
 	tmp, err := newNamedTempFile(baseName)
 	if err != nil {
 		return err
 	}
 	defer tmp.Close()
 
+	// Copy to local file, ready for the editor
 	if err := shovel.CopyIn(tmp.file, src); err != nil {
 		return err
 	}
 
 	// User editing the file
-	changes, err := localEdit(tmp.file, r.Editor)
+	changes, err := localEdit(tmp.file, localEditor)
 	if err != nil {
 		return err
 	}
