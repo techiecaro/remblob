@@ -3,7 +3,6 @@ package core
 import (
 	"fmt"
 	"io"
-	"log"
 	"net/url"
 
 	"techiecaro/remblob/editor"
@@ -11,7 +10,7 @@ import (
 	"techiecaro/remblob/storage"
 )
 
-func Edit(source url.URL, destination url.URL) {
+func Edit(source url.URL, destination url.URL) error {
 	src := storage.GetFileStorage(source)
 	dst := storage.GetFileStorage(destination)
 
@@ -23,12 +22,10 @@ func Edit(source url.URL, destination url.URL) {
 	baseName := getBaseName(source)
 	localEditor := editor.EnvEditor{}
 
-	if err := remoteEdit(baseName, src, dst, shovel, localEditor); err != nil {
-		log.Fatal(err)
-	}
+	return remoteEdit(baseName, src, dst, shovel, localEditor)
 }
 
-func View(source url.URL) {
+func View(source url.URL) error {
 	src := storage.GetFileStorage(source)
 
 	shovel := shovel.MultiShovel{
@@ -39,9 +36,7 @@ func View(source url.URL) {
 	baseName := getBaseName(source)
 	localEditor := editor.EnvEditor{}
 
-	if err := remoteView(baseName, src, shovel, localEditor); err != nil {
-		log.Fatal(err)
-	}
+	return remoteView(baseName, src, shovel, localEditor)
 }
 
 func remoteEdit(baseName string, src io.ReadCloser, dst io.WriteCloser, shovel shovel.Shovel, localEditor editor.Editor) error {
