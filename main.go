@@ -9,7 +9,7 @@ import (
 
 const appName = "remblob"
 const appDescription = `
-	Edit remote file locally.
+	Edit remote files locally.
 
 	Example executions:
 	remblob edit s3://a-bucket/path/blob.json
