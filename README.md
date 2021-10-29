@@ -33,7 +33,9 @@ Commands:
 
 ### macOS
 
-(WIP)
+```
+brew install techiecaro/tap/remblob
+```
 
 ### Linux
 
