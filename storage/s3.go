@@ -3,7 +3,6 @@ package storage
 import (
 	"bytes"
 	"context"
-	"fmt"
 	"log"
 	"net/url"
 	"os"
@@ -41,8 +40,6 @@ func getS3FileStorage(uri url.URL) *s3FileStorage {
 func buildS3Config() (aws.Config, error) {
 	customResolver := aws.EndpointResolverFunc(func(service, region string) (aws.Endpoint, error) {
 		if awsEndpoint, ok := os.LookupEnv("AWS_ENDPOINT"); ok {
-			fmt.Println("awsEndpoint:", awsEndpoint)
-			fmt.Println("region:", region)
 			return aws.Endpoint{
 				PartitionID:       "aws",
 				URL:               awsEndpoint,
