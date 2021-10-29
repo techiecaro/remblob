@@ -39,6 +39,7 @@ brews:
     homepage: "https://github.com/techiecaro/remblob"
     description: "Edit remote files locally."
     license: "MIT"
+    folder: Formula
 
     dependencies:
     - name: go
