@@ -1,6 +1,6 @@
 # Remblob
 
-Command line tool makeing working with remote files esier.
+Command line tool making working with remote files easier.
 
 It lets you edit or view remote files in your local editor.
 
