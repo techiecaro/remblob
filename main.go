@@ -2,9 +2,11 @@ package main
 
 import (
 	"net/url"
+	"os"
 	"techiecaro/remblob/core"
 
 	"github.com/alecthomas/kong"
+	"github.com/willabides/kongplete"
 )
 
 const appName = "remblob"
@@ -42,18 +44,22 @@ func (v viewCmd) Run() error {
 }
 
 var cli struct {
-	Edit editCmd `cmd help:"Edits a remote blob and optionally stores it elsewhere."`
-	View viewCmd `cmd help:"Views a remote blob."`
+	Edit               editCmd                      `cmd help:"Edits a remote blob and optionally stores it elsewhere."`
+	View               viewCmd                      `cmd help:"Views a remote blob."`
+	InstallCompletions kongplete.InstallCompletions `cmd:"" help:"install shell completions"`
 }
 
 func main() {
-	ctx := kong.Parse(
+	parser := kong.Must(
 		&cli,
 		kong.Name(appName),
 		kong.Description(appDescription),
 		kong.UsageOnError(),
 	)
 
-	err := ctx.Run()
-	ctx.FatalIfErrorf(err)
+	ctx, err := parser.Parse(os.Args[1:])
+	parser.FatalIfErrorf(err)
+
+	err = ctx.Run()
+	parser.FatalIfErrorf(err)
 }
