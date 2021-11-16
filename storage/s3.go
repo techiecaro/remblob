@@ -104,3 +104,14 @@ func (s *s3FileStorage) Close() error {
 	}
 	return nil
 }
+
+func init() {
+	registerFileStorage(
+		registrationInfo{
+			storage:           func(uri url.URL) FileStorage { return getS3FileStorage(uri) },
+			lister:            nil,
+			prefixes:          []string{"s3://"},
+			completionPrompts: []string{},
+		},
+	)
+}
