@@ -22,12 +22,10 @@ type s3FileStorage struct {
 }
 
 func getS3FileStorage(uri url.URL) *s3FileStorage {
-	cfg, err := buildS3Config()
+	client, err := buildS3Client()
 	if err != nil {
-		log.Fatalf("failed to load SDK configuration, %v", err)
+		log.Fatalf("failed to create S3 client, %v", err)
 	}
-
-	client := s3.NewFromConfig(cfg)
 
 	fs := new(s3FileStorage)
 	fs.client = client
@@ -35,6 +33,16 @@ func getS3FileStorage(uri url.URL) *s3FileStorage {
 	fs.key = strings.TrimLeft(uri.Path, "/")
 	fs.readBlob = nil
 	return fs
+}
+
+func buildS3Client() (*s3.Client, error) {
+	cfg, err := buildS3Config()
+	if err != nil {
+		return nil, err
+	}
+
+	client := s3.NewFromConfig(cfg)
+	return client, nil
 }
 
 func buildS3Config() (aws.Config, error) {
@@ -105,11 +113,70 @@ func (s *s3FileStorage) Close() error {
 	return nil
 }
 
+func s3FileStorageLister(prefix url.URL) []url.URL {
+	suggestions := []url.URL{}
+
+	client, err := buildS3Client()
+	if err != nil {
+		return suggestions
+	}
+
+	delimiter := "/"
+
+	// Suggesting buckets
+	if prefix.Path == "" {
+		buckets, err := client.ListBuckets(context.TODO(), nil)
+		if err != nil {
+			return suggestions
+		}
+		for _, bucket := range buckets.Buckets {
+			bucketURL := url.URL{
+				Scheme: prefix.Scheme,
+				Host:   *bucket.Name,
+				Path:   delimiter,
+			}
+			suggestions = append(suggestions, bucketURL)
+		}
+		return suggestions
+	}
+
+	// Suggesting keys in a bucket
+	s3Prefix := strings.TrimPrefix(prefix.Path, delimiter)
+	params := s3.ListObjectsV2Input{
+		Bucket:    &prefix.Host,
+		Prefix:    &s3Prefix,
+		Delimiter: &delimiter,
+	}
+	objects, err := client.ListObjectsV2(context.TODO(), &params)
+	if err != nil {
+		return suggestions
+	}
+
+	for _, objectPrefix := range objects.CommonPrefixes {
+		folderURL := url.URL{
+			Scheme: prefix.Scheme,
+			Host:   prefix.Host,
+			Path:   *objectPrefix.Prefix,
+		}
+		suggestions = append(suggestions, folderURL)
+	}
+	for _, object := range objects.Contents {
+		objectURL := url.URL{
+			Scheme: prefix.Scheme,
+			Host:   prefix.Host,
+			Path:   *object.Key,
+		}
+		suggestions = append(suggestions, objectURL)
+	}
+
+	return suggestions
+}
+
 func init() {
 	registerFileStorage(
 		registrationInfo{
 			storage:           func(uri url.URL) FileStorage { return getS3FileStorage(uri) },
-			lister:            nil,
+			lister:            s3FileStorageLister,
 			prefixes:          []string{"s3://"},
 			completionPrompts: []string{},
 		},
