@@ -21,20 +21,28 @@ type s3FileStorage struct {
 	writeBuff *bytes.Buffer
 }
 
-func getS3FileStorage(uri url.URL) *s3FileStorage {
-	cfg, err := buildS3Config()
-	if err != nil {
-		log.Fatalf("failed to load SDK configuration, %v", err)
-	}
+type s3Lister interface {
+	ListBuckets(context.Context, *s3.ListBucketsInput, ...func(*s3.Options)) (*s3.ListBucketsOutput, error)
+	ListObjectsV2(context.Context, *s3.ListObjectsV2Input, ...func(*s3.Options)) (*s3.ListObjectsV2Output, error)
+}
 
-	client := s3.NewFromConfig(cfg)
-
+func getS3FileStorage(uri url.URL, client *s3.Client) *s3FileStorage {
 	fs := new(s3FileStorage)
 	fs.client = client
 	fs.bucket = uri.Host
 	fs.key = strings.TrimLeft(uri.Path, "/")
 	fs.readBlob = nil
 	return fs
+}
+
+func buildS3Client() (*s3.Client, error) {
+	cfg, err := buildS3Config()
+	if err != nil {
+		return nil, err
+	}
+
+	client := s3.NewFromConfig(cfg)
+	return client, nil
 }
 
 func buildS3Config() (aws.Config, error) {
@@ -103,4 +111,75 @@ func (s *s3FileStorage) Close() error {
 		s.writeBuff = nil
 	}
 	return nil
+}
+
+func s3FileStorageLister(prefix url.URL, client s3Lister) []url.URL {
+	suggestions := []url.URL{}
+
+	delimiter := "/"
+
+	// Suggesting buckets
+	if prefix.Path == "" {
+		buckets, err := client.ListBuckets(context.TODO(), nil)
+		if err != nil {
+			return suggestions
+		}
+		for _, bucket := range buckets.Buckets {
+			bucketURL := url.URL{
+				Scheme: prefix.Scheme,
+				Host:   *bucket.Name,
+				Path:   delimiter,
+			}
+			suggestions = append(suggestions, bucketURL)
+		}
+		return suggestions
+	}
+
+	// Suggesting keys in a bucket
+	s3Prefix := strings.TrimPrefix(prefix.Path, delimiter)
+	params := s3.ListObjectsV2Input{
+		Bucket:    &prefix.Host,
+		Prefix:    &s3Prefix,
+		Delimiter: &delimiter,
+	}
+	objects, err := client.ListObjectsV2(context.TODO(), &params)
+	if err != nil {
+		return suggestions
+	}
+
+	for _, objectPrefix := range objects.CommonPrefixes {
+		folderURL := url.URL{
+			Scheme: prefix.Scheme,
+			Host:   prefix.Host,
+			Path:   *objectPrefix.Prefix,
+		}
+		suggestions = append(suggestions, folderURL)
+	}
+	for _, object := range objects.Contents {
+		objectURL := url.URL{
+			Scheme: prefix.Scheme,
+			Host:   prefix.Host,
+			Path:   *object.Key,
+		}
+		suggestions = append(suggestions, objectURL)
+	}
+
+	return suggestions
+}
+
+func init() {
+	client, err := buildS3Client()
+	if err != nil {
+		log.Fatalf("S3 not available. Could not construct client: %v", err)
+		return
+	}
+
+	registerFileStorage(
+		registrationInfo{
+			storage:           func(uri url.URL) FileStorage { return getS3FileStorage(uri, client) },
+			lister:            func(prefix url.URL) []url.URL { return s3FileStorageLister(prefix, client) },
+			prefixes:          []string{"s3://"},
+			completionPrompts: []string{},
+		},
+	)
 }

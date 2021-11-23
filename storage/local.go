@@ -1,8 +1,12 @@
 package storage
 
 import (
+	"io/ioutil"
 	"net/url"
 	"os"
+	"path"
+	"path/filepath"
+	"strings"
 )
 
 type localFileStorage struct {
@@ -12,7 +16,7 @@ type localFileStorage struct {
 
 func getLocalFileStorage(uri url.URL) *localFileStorage {
 	fs := new(localFileStorage)
-	fs.uri = uri.String()
+	fs.uri = uriToPath(uri)
 	fs.localFile = nil
 	return fs
 }
@@ -53,4 +57,61 @@ func (l *localFileStorage) Close() error {
 
 	l.localFile = nil
 	return nil
+}
+
+func uriToPath(uri url.URL) string {
+	strURI := uri.Path
+	if uri.Host != "" {
+		strURI = path.Join(uri.Host, uri.Path)
+	}
+
+	return strURI
+}
+
+func isDir(prefix string) bool {
+	stat, err := os.Stat(prefix)
+	if err != nil {
+		return false
+	}
+	return stat.IsDir()
+}
+
+func localFileStorageLister(prefix url.URL) []url.URL {
+	suggestions := []url.URL{}
+
+	basePath := uriToPath(prefix)
+	parentDir := basePath
+	if !isDir(parentDir) {
+		parentDir = path.Dir(parentDir)
+	}
+
+	files, err := ioutil.ReadDir(parentDir)
+	if err != nil {
+		return suggestions
+	}
+
+	separator := string(filepath.Separator)
+	for _, file := range files {
+		full := strings.Join([]string{strings.TrimSuffix(parentDir, separator), file.Name()}, separator)
+		if prefix.Scheme != "" || basePath == "" {
+			full = path.Join(full)
+		}
+		if uri, err := url.Parse(full); err == nil {
+			uri.Scheme = prefix.Scheme
+			suggestions = append(suggestions, *uri)
+		}
+	}
+
+	return suggestions
+}
+
+func init() {
+	registerFileStorage(
+		registrationInfo{
+			storage:           func(uri url.URL) FileStorage { return getLocalFileStorage(uri) },
+			lister:            localFileStorageLister,
+			prefixes:          []string{"", "file://"},
+			completionPrompts: []string{"./"},
+		},
+	)
 }
