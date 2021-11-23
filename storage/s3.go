@@ -21,12 +21,12 @@ type s3FileStorage struct {
 	writeBuff *bytes.Buffer
 }
 
-func getS3FileStorage(uri url.URL) *s3FileStorage {
-	client, err := buildS3Client()
-	if err != nil {
-		log.Fatalf("failed to create S3 client, %v", err)
-	}
+type s3Lister interface {
+	ListBuckets(context.Context, *s3.ListBucketsInput, ...func(*s3.Options)) (*s3.ListBucketsOutput, error)
+	ListObjectsV2(context.Context, *s3.ListObjectsV2Input, ...func(*s3.Options)) (*s3.ListObjectsV2Output, error)
+}
 
+func getS3FileStorage(uri url.URL, client *s3.Client) *s3FileStorage {
 	fs := new(s3FileStorage)
 	fs.client = client
 	fs.bucket = uri.Host
@@ -113,13 +113,8 @@ func (s *s3FileStorage) Close() error {
 	return nil
 }
 
-func s3FileStorageLister(prefix url.URL) []url.URL {
+func s3FileStorageLister(prefix url.URL, client s3Lister) []url.URL {
 	suggestions := []url.URL{}
-
-	client, err := buildS3Client()
-	if err != nil {
-		return suggestions
-	}
 
 	delimiter := "/"
 
@@ -173,10 +168,16 @@ func s3FileStorageLister(prefix url.URL) []url.URL {
 }
 
 func init() {
+	client, err := buildS3Client()
+	if err != nil {
+		log.Fatalf("S3 not available. Could not construct client: %v", err)
+		return
+	}
+
 	registerFileStorage(
 		registrationInfo{
-			storage:           func(uri url.URL) FileStorage { return getS3FileStorage(uri) },
-			lister:            s3FileStorageLister,
+			storage:           func(uri url.URL) FileStorage { return getS3FileStorage(uri, client) },
+			lister:            func(prefix url.URL) []url.URL { return s3FileStorageLister(prefix, client) },
 			prefixes:          []string{"s3://"},
 			completionPrompts: []string{},
 		},

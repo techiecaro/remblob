@@ -1,11 +1,10 @@
-package storage_test
+package storage
 
 import (
 	"fmt"
 	"net/url"
 	"os"
 	"path"
-	"techiecaro/remblob/storage"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -26,7 +25,7 @@ var files = []string{
 	"z",
 }
 
-func uriToPath(uris []url.URL) []string {
+func urisToPaths(uris []url.URL) []string {
 	paths := make([]string, len(uris))
 	for i, uri := range uris {
 		paths[i] = uri.String()
@@ -217,10 +216,10 @@ func TestLocalStorageSuggestions(t *testing.T) {
 			}
 
 			uriPrefix := mustStrToURI(t, tc.prefix)
-			lister := storage.GetFileLister(uriPrefix)
+			lister := GetFileLister(uriPrefix)
 			suggestion := lister(uriPrefix)
 
-			assert.Equal(t, tc.expected, uriToPath(suggestion), "Invalid prompt")
+			assert.Equal(t, tc.expected, urisToPaths(suggestion), "Invalid prompt")
 		})
 	}
 }

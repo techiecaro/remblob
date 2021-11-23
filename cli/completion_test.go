@@ -63,10 +63,6 @@ func TestPathPredictor(t *testing.T) {
 			prefix:   "file://a",
 			expected: []string{"./", "file://", "s3://", "file://a/a1.txt"},
 		},
-		{
-			prefix:   "s3://",
-			expected: []string{"./", "file://", "s3://"},
-		},
 	}
 
 	for _, tc := range cases {
