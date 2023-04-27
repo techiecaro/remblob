@@ -11,8 +11,14 @@ import (
 )
 
 func Edit(source url.URL, destination url.URL) error {
-	src := storage.GetFileStorage(source)
-	dst := storage.GetFileStorage(destination)
+	src, err := storage.GetFileStorage(source)
+	if err != nil {
+		return err
+	}
+	dst, err := storage.GetFileStorage(destination)
+	if err != nil {
+		return err
+	}
 
 	shovel := shovel.MultiShovel{
 		SourceCompressed:      isCompressed(source),
@@ -26,7 +32,10 @@ func Edit(source url.URL, destination url.URL) error {
 }
 
 func View(source url.URL) error {
-	src := storage.GetFileStorage(source)
+	src, err := storage.GetFileStorage(source)
+	if err != nil {
+		return err
+	}
 
 	shovel := shovel.MultiShovel{
 		SourceCompressed:      isCompressed(source),
