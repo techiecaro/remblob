@@ -39,7 +39,7 @@ func registerFileStorage(registration registrationInfo) {
     }
 }
 
-func EmptyFileLister(prefix url.URL) []url.URL {
+func emptyFileLister(prefix url.URL) []url.URL {
     return []url.URL{}
 }
 
@@ -77,7 +77,7 @@ func GetFileListerPrefixes() []string {
 }
 
 func GetFileLister(prefix url.URL) FileLister {
-    lister := EmptyFileLister
+    lister := emptyFileLister
 
     if info, ok := fileStorageRegister[prefix.Scheme]; ok {
         if info.lister != nil {
