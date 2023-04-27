@@ -42,6 +42,12 @@ func buildS3Client() (*s3.Client, error) {
 	}
 
 	client := s3.NewFromConfig(cfg)
+	if _, anonymous := os.LookupEnv("AWS_NO_SIGN_REQUEST"); anonymous {
+		client = s3.NewFromConfig(cfg, func(o *s3.Options) {
+			o.Credentials = aws.AnonymousCredentials{}
+		})
+	}
+
 	return client, nil
 }
 
