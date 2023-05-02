@@ -10,7 +10,7 @@ import (
 	"techiecaro/remblob/storage"
 )
 
-func Edit(source url.URL, destination url.URL) error {
+func Edit(source url.URL, destination url.URL, localEditor editor.Editor) error {
 	src, err := storage.GetFileStorage(source)
 	if err != nil {
 		return err
@@ -26,12 +26,11 @@ func Edit(source url.URL, destination url.URL) error {
 	}
 
 	baseName := getBaseName(source)
-	localEditor := editor.EnvEditor{}
 
 	return remoteEdit(baseName, src, dst, shovel, localEditor)
 }
 
-func View(source url.URL) error {
+func View(source url.URL, localEditor editor.Editor) error {
 	src, err := storage.GetFileStorage(source)
 	if err != nil {
 		return err
@@ -43,7 +42,6 @@ func View(source url.URL) error {
 	}
 
 	baseName := getBaseName(source)
-	localEditor := editor.EnvEditor{}
 
 	return remoteView(baseName, src, shovel, localEditor)
 }

@@ -3,6 +3,7 @@ package cli
 import (
 	"net/url"
 	"techiecaro/remblob/core"
+	"techiecaro/remblob/editor"
 
 	"github.com/willabides/kongplete"
 )
@@ -20,7 +21,8 @@ func (e editCmd) GetDestinationPath() url.URL {
 }
 
 func (e editCmd) Run() error {
-	return core.Edit(e.SourcePath, e.GetDestinationPath())
+	localEditor := editor.EnvEditor{}
+	return core.Edit(e.SourcePath, e.GetDestinationPath(), localEditor)
 }
 
 type viewCmd struct {
@@ -28,7 +30,8 @@ type viewCmd struct {
 }
 
 func (v viewCmd) Run() error {
-	return core.View(v.SourcePath)
+	localEditor := editor.EnvEditor{}
+	return core.View(v.SourcePath, localEditor)
 }
 
 var Cli struct {
