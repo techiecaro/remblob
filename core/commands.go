@@ -10,9 +10,15 @@ import (
 	"techiecaro/remblob/storage"
 )
 
-func Edit(source url.URL, destination url.URL) error {
-	src := storage.GetFileStorage(source)
-	dst := storage.GetFileStorage(destination)
+func Edit(source url.URL, destination url.URL, localEditor editor.Editor) error {
+	src, err := storage.GetFileStorage(source)
+	if err != nil {
+		return err
+	}
+	dst, err := storage.GetFileStorage(destination)
+	if err != nil {
+		return err
+	}
 
 	shovel := shovel.MultiShovel{
 		SourceCompressed:      isCompressed(source),
@@ -20,13 +26,15 @@ func Edit(source url.URL, destination url.URL) error {
 	}
 
 	baseName := getBaseName(source)
-	localEditor := editor.EnvEditor{}
 
 	return remoteEdit(baseName, src, dst, shovel, localEditor)
 }
 
-func View(source url.URL) error {
-	src := storage.GetFileStorage(source)
+func View(source url.URL, localEditor editor.Editor) error {
+	src, err := storage.GetFileStorage(source)
+	if err != nil {
+		return err
+	}
 
 	shovel := shovel.MultiShovel{
 		SourceCompressed:      isCompressed(source),
@@ -34,7 +42,6 @@ func View(source url.URL) error {
 	}
 
 	baseName := getBaseName(source)
-	localEditor := editor.EnvEditor{}
 
 	return remoteView(baseName, src, shovel, localEditor)
 }

@@ -3,7 +3,7 @@ package storage
 import (
 	"bytes"
 	"context"
-	"log"
+	"fmt"
 	"net/url"
 	"os"
 	"strings"
@@ -42,6 +42,12 @@ func buildS3Client() (*s3.Client, error) {
 	}
 
 	client := s3.NewFromConfig(cfg)
+	if _, anonymous := os.LookupEnv("AWS_NO_SIGN_REQUEST"); anonymous {
+		client = s3.NewFromConfig(cfg, func(o *s3.Options) {
+			o.Credentials = aws.AnonymousCredentials{}
+		})
+	}
+
 	return client, nil
 }
 
@@ -147,6 +153,7 @@ func s3FileStorageLister(prefix url.URL, client s3Lister) []url.URL {
 		return suggestions
 	}
 
+	// Suggesting "folders"
 	for _, objectPrefix := range objects.CommonPrefixes {
 		folderURL := url.URL{
 			Scheme: prefix.Scheme,
@@ -155,6 +162,7 @@ func s3FileStorageLister(prefix url.URL, client s3Lister) []url.URL {
 		}
 		suggestions = append(suggestions, folderURL)
 	}
+	// Suggesting "files"
 	for _, object := range objects.Contents {
 		objectURL := url.URL{
 			Scheme: prefix.Scheme,
@@ -170,7 +178,7 @@ func s3FileStorageLister(prefix url.URL, client s3Lister) []url.URL {
 func init() {
 	client, err := buildS3Client()
 	if err != nil {
-		log.Fatalf("S3 not available. Could not construct client: %v", err)
+		fmt.Printf("S3 not available. Could not construct client: %#v\n", err.Error())
 		return
 	}
 

@@ -1,6 +1,7 @@
 package storage
 
 import (
+    "fmt"
     "log"
     "net/url"
     "sort"
@@ -39,16 +40,16 @@ func registerFileStorage(registration registrationInfo) {
     }
 }
 
-func EmptyFileLister(prefix url.URL) []url.URL {
+func emptyFileLister(prefix url.URL) []url.URL {
     return []url.URL{}
 }
 
-func GetFileStorage(uri url.URL) FileStorage {
+func GetFileStorage(uri url.URL) (FileStorage, error) {
     if info, ok := fileStorageRegister[uri.Scheme]; ok {
-        return info.storage(uri)
+        return info.storage(uri), nil
     }
 
-    panic("Can not handle this uri")
+    return nil, fmt.Errorf("Can not handle this uri: %#v", uri.String())
 }
 
 func GetFileListerPrefixes() []string {
@@ -77,7 +78,7 @@ func GetFileListerPrefixes() []string {
 }
 
 func GetFileLister(prefix url.URL) FileLister {
-    lister := EmptyFileLister
+    lister := emptyFileLister
 
     if info, ok := fileStorageRegister[prefix.Scheme]; ok {
         if info.lister != nil {
