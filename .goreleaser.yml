@@ -1,5 +1,5 @@
-# GoReleaser v2 configuration
-version: 2
+# GoReleaser v1 configuration (compatible with GitHub Actions)
+version: 1
 
 before:
   hooks:
@@ -19,19 +19,12 @@ builds:
       - arm64
 
 archives:
-  - format: tar.gz
-    # this name template makes the OS and Arch compatible with the results of `uname`.
-    name_template: >-
-      {{ .ProjectName }}_
-      {{- title .Os }}_
-      {{- if eq .Arch "amd64" }}x86_64
-      {{- else if eq .Arch "386" }}i386
-      {{- else }}{{ .Arch }}{{ end }}
-      {{- if .Arm }}v{{ .Arm }}{{ end }}
-    # use zip for windows archives
-    format_overrides:
-      - goos: windows
-        format: zip
+  - replacements:
+      darwin: Darwin
+      linux: Linux
+      windows: Windows
+      386: i386
+      amd64: x86_64
 
 checksum:
   name_template: 'checksums.txt'
@@ -47,13 +40,13 @@ changelog:
       - '^test:'
 
 brews:
-  - repository:
+  - tap:
       owner: techiecaro
       name: homebrew-tap
     homepage: "https://github.com/techiecaro/remblob"
     description: "Edit remote files locally."
     license: "MIT"
-    directory: Formula
+    folder: Formula
     dependencies:
       - name: go
         type: optional
