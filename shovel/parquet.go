@@ -15,23 +15,27 @@ import (
 	"github.com/xitongsys/parquet-go/writer"
 )
 
-// ParquetShovel converts between parquet binary format and CSV for editing
+// ParquetShovel converts between parquet binary format and CSV for editing.
+// It preserves schema information between CopyIn and CopyOut operations to maintain
+// data type consistency during round-trip conversions.
 type ParquetShovel struct {
-	Schema *ParquetSchema
+	// Schema holds the parquet schema extracted during CopyIn for reuse in CopyOut
+	Schema *parquetSchema
 }
 
-// ParquetSchema holds the schema information for a parquet file
-type ParquetSchema struct {
-	Fields []ParquetField
+// parquetSchema holds the schema information for a parquet file
+type parquetSchema struct {
+	Fields []parquetField
 }
 
-// ParquetField represents a field in the parquet schema
-type ParquetField struct {
+// parquetField represents a field in the parquet schema
+type parquetField struct {
 	Name string
 	Type string
 }
 
-// CopyIn converts parquet data to CSV format for editing
+// CopyIn converts parquet data to CSV format for editing.
+// It extracts and stores the parquet schema for later use in CopyOut.
 func (p *ParquetShovel) CopyIn(dst io.WriteCloser, src io.ReadCloser) error {
 	defer src.Close()
 
@@ -97,7 +101,8 @@ func (p *ParquetShovel) CopyIn(dst io.WriteCloser, src io.ReadCloser) error {
 	return nil
 }
 
-// CopyOut converts CSV back to parquet format
+// CopyOut converts CSV back to parquet format.
+// Uses stored schema if available, otherwise infers schema from CSV data with type widening.
 func (p *ParquetShovel) CopyOut(dst io.WriteCloser, src io.ReadCloser) error {
 	defer dst.Close()
 
@@ -137,7 +142,7 @@ func (p *ParquetShovel) CopyOut(dst io.WriteCloser, src io.ReadCloser) error {
 	fw := buffer.NewBufferFile()
 
 	// Use stored schema if available, otherwise infer from data
-	var schemaToUse *ParquetSchema
+	var schemaToUse *parquetSchema
 	if p.Schema != nil {
 		schemaToUse = p.Schema
 	} else {
@@ -164,14 +169,14 @@ func (p *ParquetShovel) CopyOut(dst io.WriteCloser, src io.ReadCloser) error {
 	}
 
 	// Write records by converting maps to structs
-	for _, record := range records {
-		structRecord, err := convertMapToStruct(record, structType, schemaToUse)
+	for rowIndex, record := range records {
+		structRecord, err := convertMapToStruct(record, structType, schemaToUse, rowIndex+1) // +1 for 1-based row numbering
 		if err != nil {
-			return fmt.Errorf("failed to convert record to struct: %w", err)
+			return err // Pass through the detailed error message directly
 		}
 
 		if err := pw.Write(structRecord); err != nil {
-			return fmt.Errorf("failed to write parquet record: %w", err)
+			return fmt.Errorf("failed to write parquet record at row %d: %w", rowIndex+1, err)
 		}
 	}
 
@@ -191,6 +196,7 @@ func (p *ParquetShovel) CopyOut(dst io.WriteCloser, src io.ReadCloser) error {
 
 // Helper functions
 
+// writeRecordAsCSV writes a record map as a CSV row using the provided headers order
 func writeRecordAsCSV(csvWriter *csv.Writer, record map[string]interface{}, headers []string) error {
 	values := make([]string, len(headers))
 	for i, header := range headers {
@@ -203,6 +209,7 @@ func writeRecordAsCSV(csvWriter *csv.Writer, record map[string]interface{}, head
 	return csvWriter.Write(values)
 }
 
+// formatCSVValue converts a value to its string representation for CSV output
 func formatCSVValue(value interface{}) string {
 	if value == nil {
 		return ""
@@ -221,6 +228,7 @@ func formatCSVValue(value interface{}) string {
 	}
 }
 
+// parseCSVValue attempts to parse a CSV string value into the most appropriate Go type
 func parseCSVValue(value string) interface{} {
 	if value == "" {
 		return nil
@@ -246,12 +254,12 @@ func parseCSVValue(value string) interface{} {
 }
 
 // extractSchema extracts the schema information from a parquet reader
-func extractSchema(pr *reader.ParquetReader) (*ParquetSchema, error) {
+func extractSchema(pr *reader.ParquetReader) (*parquetSchema, error) {
 	// Get the schema tree from the parquet reader
 	schemaTree := pr.SchemaHandler.SchemaElements
 
-	schema := &ParquetSchema{
-		Fields: make([]ParquetField, 0),
+	schema := &parquetSchema{
+		Fields: make([]parquetField, 0),
 	}
 
 	// Skip the first element which is the root schema
@@ -271,7 +279,7 @@ func extractSchema(pr *reader.ParquetReader) (*ParquetSchema, error) {
 					fieldName = element.Name
 				}
 
-				field := ParquetField{
+				field := parquetField{
 					Name: fieldName,
 					Type: fieldType,
 				}
@@ -294,7 +302,7 @@ func getParquetTypeString(element *parquet.SchemaElement) string {
 }
 
 // extractFieldValues uses reflection to extract field values from a struct
-func extractFieldValues(record interface{}, schema *ParquetSchema) (map[string]interface{}, error) {
+func extractFieldValues(record interface{}, schema *parquetSchema) (map[string]interface{}, error) {
 	result := make(map[string]interface{})
 
 	// Use reflection to get the struct value
@@ -331,34 +339,34 @@ func extractFieldValues(record interface{}, schema *ParquetSchema) (map[string]i
 	return result, nil
 }
 
-// ParquetTypeRank represents the hierarchy of types for widening
-type ParquetTypeRank int
+// parquetTypeRank represents the hierarchy of types for widening
+type parquetTypeRank int
 
 const (
-	TypeEmpty ParquetTypeRank = iota
-	TypeBoolean
-	TypeInt
-	TypeFloat
-	TypeString
+	typeEmpty parquetTypeRank = iota
+	typeBoolean
+	typeInt
+	typeFloat
+	typeString
 )
 
 // inferSchemaWithTypeWidening analyzes all records using type widening approach
-func inferSchemaWithTypeWidening(records []map[string]interface{}, headers []string) (*ParquetSchema, error) {
+func inferSchemaWithTypeWidening(records []map[string]interface{}, headers []string) (*parquetSchema, error) {
 	if len(records) == 0 {
-		return &ParquetSchema{Fields: []ParquetField{}}, nil
+		return &parquetSchema{Fields: []parquetField{}}, nil
 	}
 
 	// Use provided headers to preserve field order
 	fieldNames := headers
 
 	// For each field, determine the widest type needed
-	schema := &ParquetSchema{
-		Fields: make([]ParquetField, len(fieldNames)),
+	schema := &parquetSchema{
+		Fields: make([]parquetField, len(fieldNames)),
 	}
 
 	for i, fieldName := range fieldNames {
 		widenedType := determineWidestType(fieldName, records)
-		schema.Fields[i] = ParquetField{
+		schema.Fields[i] = parquetField{
 			Name: fieldName,
 			Type: widenedType,
 		}
@@ -369,7 +377,7 @@ func inferSchemaWithTypeWidening(records []map[string]interface{}, headers []str
 
 // determineWidestType examines all values for a field and returns the widest type needed
 func determineWidestType(fieldName string, records []map[string]interface{}) string {
-	currentTypeRank := TypeEmpty
+	currentTypeRank := typeEmpty
 
 	// Single pass through all values for this field
 	for _, record := range records {
@@ -386,7 +394,7 @@ func determineWidestType(fieldName string, records []map[string]interface{}) str
 		}
 
 		// Early exit if we've reached string type (widest)
-		if currentTypeRank == TypeString {
+		if currentTypeRank == typeString {
 			break
 		}
 	}
@@ -396,62 +404,62 @@ func determineWidestType(fieldName string, records []map[string]interface{}) str
 }
 
 // getValueTypeRank determines the type rank of a single value
-func getValueTypeRank(value interface{}) ParquetTypeRank {
+func getValueTypeRank(value interface{}) parquetTypeRank {
 	if value == nil {
-		return TypeEmpty
+		return typeEmpty
 	}
 
 	// Handle string values from CSV
 	if str, ok := value.(string); ok {
 		if str == "" {
-			return TypeEmpty
+			return typeEmpty
 		}
 
 		// Try to parse as different types in order of specificity
 		// Try boolean first
 		if _, err := strconv.ParseBool(str); err == nil {
-			return TypeBoolean
+			return typeBoolean
 		}
 
 		// Try integer
 		if _, err := strconv.ParseInt(str, 10, 64); err == nil {
-			return TypeInt
+			return typeInt
 		}
 
 		// Try float
 		if _, err := strconv.ParseFloat(str, 64); err == nil {
-			return TypeFloat
+			return typeFloat
 		}
 
 		// If none of the above, it's a string
-		return TypeString
+		return typeString
 	}
 
 	// Handle direct Go types (shouldn't happen much in CSV context, but just in case)
 	switch value.(type) {
 	case bool:
-		return TypeBoolean
+		return typeBoolean
 	case int, int32, int64:
-		return TypeInt
+		return typeInt
 	case float32, float64:
-		return TypeFloat
+		return typeFloat
 	default:
-		return TypeString
+		return typeString
 	}
 }
 
 // typeRankToParquetType converts a type rank to parquet type string
-func typeRankToParquetType(rank ParquetTypeRank) string {
+func typeRankToParquetType(rank parquetTypeRank) string {
 	switch rank {
-	case TypeEmpty:
+	case typeEmpty:
 		return "BYTE_ARRAY" // Default to string for empty fields
-	case TypeBoolean:
+	case typeBoolean:
 		return "BOOLEAN"
-	case TypeInt:
+	case typeInt:
 		return "INT64"
-	case TypeFloat:
+	case typeFloat:
 		return "DOUBLE"
-	case TypeString:
+	case typeString:
 		return "BYTE_ARRAY"
 	default:
 		return "BYTE_ARRAY"
@@ -459,7 +467,7 @@ func typeRankToParquetType(rank ParquetTypeRank) string {
 }
 
 // createStructTypeFromSchema dynamically creates a struct type based on the schema
-func createStructTypeFromSchema(schema *ParquetSchema) (reflect.Type, error) {
+func createStructTypeFromSchema(schema *parquetSchema) (reflect.Type, error) {
 	fields := make([]reflect.StructField, len(schema.Fields))
 
 	for i, schemaField := range schema.Fields {
@@ -553,7 +561,7 @@ func normalizeFieldName(name string) string {
 }
 
 // convertMapToStruct converts a map to a struct instance based on the provided type and schema
-func convertMapToStruct(record map[string]interface{}, structType reflect.Type, schema *ParquetSchema) (interface{}, error) {
+func convertMapToStruct(record map[string]interface{}, structType reflect.Type, schema *parquetSchema, rowNumber int) (interface{}, error) {
 	structValue := reflect.New(structType).Elem()
 
 	for i, field := range schema.Fields {
@@ -576,7 +584,8 @@ func convertMapToStruct(record map[string]interface{}, structType reflect.Type, 
 
 		// Convert and set the value
 		if err := setFieldValue(fieldValue, mapValue); err != nil {
-			return nil, fmt.Errorf("failed to set field %s: %w", field.Name, err)
+			return nil, fmt.Errorf("field '%s' at row %d: cannot convert %q to %s",
+				field.Name, rowNumber, fmt.Sprintf("%v", mapValue), fieldValue.Type())
 		}
 	}
 
@@ -665,6 +674,7 @@ func convertToInt64(value interface{}) (int64, bool) {
 	return 0, false
 }
 
+// convertToFloat64 attempts to convert a value to float64
 func convertToFloat64(value interface{}) (float64, bool) {
 	switch v := value.(type) {
 	case int:
@@ -685,6 +695,7 @@ func convertToFloat64(value interface{}) (float64, bool) {
 	return 0, false
 }
 
+// convertToBool attempts to convert a value to bool
 func convertToBool(value interface{}) (bool, bool) {
 	switch v := value.(type) {
 	case bool:

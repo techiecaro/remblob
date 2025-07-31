@@ -20,7 +20,7 @@ func Edit(source url.URL, destination url.URL, localEditor editor.Editor) error 
 		return err
 	}
 
-	shovelInstance := shovel.MultiShovel{
+	shovelInstance := &shovel.MultiShovel{
 		SourceCompressed:      isCompressed(source),
 		DestinationCompressed: isCompressed(destination),
 		SourceParquet:         isParquet(source),
@@ -38,7 +38,7 @@ func View(source url.URL, localEditor editor.Editor) error {
 	}
 
 	// For view mode, only care about source format
-	shovelInstance := shovel.MultiShovel{
+	shovelInstance := &shovel.MultiShovel{
 		SourceCompressed:      isCompressed(source),
 		DestinationCompressed: false, // Not used in view mode
 		SourceParquet:         isParquet(source),

@@ -91,7 +91,7 @@ func createTestParquetDataWithDots() []byte {
 	return fw.Bytes()
 }
 
-func TestParquetShovel_CopyIn(t *testing.T) {
+func TestParquetShovelCopyIn(t *testing.T) {
 	tests := []struct {
 		name           string
 		parquetData    []byte
@@ -174,7 +174,7 @@ func TestParquetShovel_CopyIn(t *testing.T) {
 	}
 }
 
-func TestParquetShovel_CopyOut_WithStoredSchema(t *testing.T) {
+func TestParquetShovelCopyOutWithStoredSchema(t *testing.T) {
 	// First, create a parquet file and extract its schema
 	parquetData := createTestParquetData()
 
@@ -255,7 +255,7 @@ Charlie,35,92.8,true`
 	}
 }
 
-func TestParquetShovel_CopyOut_WithoutStoredSchema(t *testing.T) {
+func TestParquetShovelCopyOutWithoutStoredSchema(t *testing.T) {
 	// Test CopyOut without a pre-existing schema (should infer from CSV)
 	shovel := &ParquetShovel{} // No schema stored
 
@@ -293,7 +293,7 @@ Bob,30,87.2,false`
 	}
 }
 
-func TestParquetShovel_CopyOut_TypeInferenceEdgeCases(t *testing.T) {
+func TestParquetShovelCopyOutTypeInferenceEdgeCases(t *testing.T) {
 	tests := []struct {
 		name          string
 		csvInput      string
@@ -449,7 +449,7 @@ a,2,1
 	}
 }
 
-func TestParquetShovel_TypeInferenceFromFirstRow(t *testing.T) {
+func TestParquetShovelTypeInferenceFromFirstRow(t *testing.T) {
 	// Test that type inference is based on the first non-empty value found
 	tests := []struct {
 		name             string
@@ -532,7 +532,7 @@ false,true`,
 	}
 }
 
-func TestParquetShovel_EmptyData(t *testing.T) {
+func TestParquetShovelEmptyData(t *testing.T) {
 	// Test with empty parquet file
 	fw := buffer.NewBufferFile()
 	pw, err := writer.NewParquetWriter(fw, new(TestData), 4)
@@ -565,7 +565,7 @@ func TestParquetShovel_EmptyData(t *testing.T) {
 	}
 }
 
-func TestParquetShovel_RoundTrip(t *testing.T) {
+func TestParquetShovelRoundTrip(t *testing.T) {
 	// Test complete round trip: parquet -> CSV -> parquet
 	originalData := createTestParquetDataWithDots()
 
@@ -638,7 +638,7 @@ func TestParquetShovel_RoundTrip(t *testing.T) {
 	}
 }
 
-func TestParquetShovel_TestMixedTypesCSV(t *testing.T) {
+func TestParquetShovelTestMixedTypesCSV(t *testing.T) {
 	// Test the exact content from tmp/test_mixed_types.csv
 	csvInput := `a,b,c
 1,2,true
@@ -855,3 +855,61 @@ type nopWriteCloser struct {
 }
 
 func (nopWriteCloser) Close() error { return nil }
+
+func TestParquetShovelEnhancedErrorMessages(t *testing.T) {
+	// Create a parquet file with a float column
+	parquetData := createTestParquetData()
+
+	// Extract schema first
+	shovel := &ParquetShovel{}
+	src := io.NopCloser(bytes.NewReader(parquetData))
+	var tempDst bytes.Buffer
+	tempDstCloser := &nopWriteCloser{&tempDst}
+
+	err := shovel.CopyIn(tempDstCloser, src)
+	if err != nil {
+		t.Fatalf("Failed to extract schema: %v", err)
+	}
+
+	// Now test CopyOut with invalid data that should trigger enhanced error message
+	csvInput := `name,age,score,active
+Alice,25,invalid_float,true
+Bob,thirty,87.2,false` // Row 2 has "thirty" for age (int field) and "invalid_float" for score (float field)
+
+	csvSrc := io.NopCloser(strings.NewReader(csvInput))
+	var parquetDst bytes.Buffer
+	parquetDstCloser := &nopWriteCloser{&parquetDst}
+
+	err = shovel.CopyOut(parquetDstCloser, csvSrc)
+	if err == nil {
+		t.Fatal("Expected error due to type conversion failure, but got none")
+	}
+
+	errorMsg := err.Error()
+
+	// Check that error message contains all expected information
+	expectedComponents := []string{
+		"field",          // Field identification
+		"at row",         // Row number
+		"cannot convert", // Conversion failure
+	}
+
+	for _, component := range expectedComponents {
+		if !strings.Contains(errorMsg, component) {
+			t.Errorf("Error message missing component %q. Full error: %s", component, errorMsg)
+		}
+	}
+
+	// Should contain either row 1 (invalid_float in score) or row 2 (thirty in age)
+	if !strings.Contains(errorMsg, "row 1") && !strings.Contains(errorMsg, "row 2") {
+		t.Errorf("Error message should contain specific row number. Got: %s", errorMsg)
+	}
+
+	// Should contain the problematic value
+	hasProblematicValue := strings.Contains(errorMsg, "invalid_float") || strings.Contains(errorMsg, "thirty")
+	if !hasProblematicValue {
+		t.Errorf("Error message should contain the problematic value. Got: %s", errorMsg)
+	}
+
+	t.Logf("Enhanced error message: %s", errorMsg)
+}
