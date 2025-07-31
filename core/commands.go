@@ -20,14 +20,15 @@ func Edit(source url.URL, destination url.URL, localEditor editor.Editor) error 
 		return err
 	}
 
-	shovel := shovel.MultiShovel{
+	shovelInstance := &shovel.MultiShovel{
 		SourceCompressed:      isCompressed(source),
 		DestinationCompressed: isCompressed(destination),
+		SourceParquet:         isParquet(source),
+		DestinationParquet:    isParquet(destination),
 	}
-
 	baseName := getBaseName(source)
 
-	return remoteEdit(baseName, src, dst, shovel, localEditor)
+	return remoteEdit(baseName, src, dst, shovelInstance, localEditor)
 }
 
 func View(source url.URL, localEditor editor.Editor) error {
@@ -36,14 +37,16 @@ func View(source url.URL, localEditor editor.Editor) error {
 		return err
 	}
 
-	shovel := shovel.MultiShovel{
+	// For view mode, only care about source format
+	shovelInstance := &shovel.MultiShovel{
 		SourceCompressed:      isCompressed(source),
-		DestinationCompressed: false, // Not in use
+		DestinationCompressed: false, // Not used in view mode
+		SourceParquet:         isParquet(source),
+		DestinationParquet:    false, // Not used in view mode
 	}
-
 	baseName := getBaseName(source)
 
-	return remoteView(baseName, src, shovel, localEditor)
+	return remoteView(baseName, src, shovelInstance, localEditor)
 }
 
 func remoteEdit(baseName string, src io.ReadCloser, dst io.WriteCloser, shovel shovel.Shovel, localEditor editor.Editor) error {
