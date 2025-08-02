@@ -36,7 +36,7 @@ changelog:
       - '^docs:'
       - '^test:'
 
-homebrew_casks:
+brews:
   - repository:
       owner: techiecaro
       name: homebrew-tap
