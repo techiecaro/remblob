@@ -88,7 +88,7 @@ go build -o remblob .
 
 | Variable | Description | Example |
 |----------|-------------|---------|
-| `EDITOR` | Your preferred text editor | `vim`, `code`, `nano` |
+| `EDITOR` | Your preferred text editor <br>(Needs `Wait for the files to be closed before returning` option) | `vim`, `code --wait`, `nano` |
 | `AWS_ENDPOINT` | Custom S3 endpoint URL | `https://s3.us-west-2.amazonaws.com` |
 | `AWS_NO_SIGN_REQUEST` | Enable anonymous S3 access | `true` |
 
