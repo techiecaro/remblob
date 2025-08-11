@@ -13,6 +13,17 @@ type FileStorage interface {
 	Close() error
 }
 
+// MetadataCapable interface for storage types that support metadata operations
+type MetadataCapable interface {
+	GetMetadata() map[string]string
+	SetMetadata(metadata map[string]string) error
+}
+
+// VersionCapable interface for storage types that support version tracking
+type VersionCapable interface {
+	GetVersion() string // ETag, last-modified timestamp, etc.
+}
+
 type fileStorageBuilder func(url.URL) FileStorage
 type FileLister func(url.URL) []url.URL
 
