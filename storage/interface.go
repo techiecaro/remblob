@@ -51,6 +51,19 @@ func registerFileStorage(registration registrationInfo) {
 	}
 }
 
+// reregisterFileStorage allows re-registration for testing purposes
+func reregisterFileStorage(registration registrationInfo) {
+	for _, prefix := range registration.prefixes {
+		uriPrefix, err := url.Parse(prefix)
+		if err != nil {
+			log.Fatalf("Registration of %s can't progress. Can't parse it", prefix)
+		}
+
+		// Allow overwriting existing registration
+		fileStorageRegister[uriPrefix.Scheme] = registration
+	}
+}
+
 func emptyFileLister(prefix url.URL) []url.URL {
 	return []url.URL{}
 }

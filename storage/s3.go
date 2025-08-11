@@ -68,7 +68,7 @@ func buildS3Client() (*s3.Client, error) {
 
 func buildS3Config() (aws.Config, error) {
 	customResolver := aws.EndpointResolverFunc(func(service, region string) (aws.Endpoint, error) {
-		if awsEndpoint, ok := os.LookupEnv("AWS_ENDPOINT"); ok {
+		if awsEndpoint, ok := os.LookupEnv("AWS_ENDPOINT_URL"); ok {
 			return aws.Endpoint{
 				PartitionID:       "aws",
 				URL:               awsEndpoint,
@@ -302,11 +302,11 @@ func s3FileStorageLister(prefix url.URL, client s3Lister) []url.URL {
 	return suggestions
 }
 
-func init() {
+// initializeS3Storage initializes S3 storage with a fresh client based on current environment
+func initializeS3Storage() error {
 	client, err := buildS3Client()
 	if err != nil {
-		fmt.Printf("S3 not available. Could not construct client: %#v\n", err.Error())
-		return
+		return fmt.Errorf("S3 not available. Could not construct client: %w", err)
 	}
 
 	registerFileStorage(
@@ -317,4 +317,31 @@ func init() {
 			completionPrompts: []string{},
 		},
 	)
+
+	return nil
+}
+
+// ReinitializeS3StorageForTesting reinitializes S3 storage for testing with fresh environment variables
+func ReinitializeS3StorageForTesting() error {
+	client, err := buildS3Client()
+	if err != nil {
+		return fmt.Errorf("S3 not available. Could not construct client: %w", err)
+	}
+
+	reregisterFileStorage(
+		registrationInfo{
+			storage:           func(uri url.URL) FileStorage { return getS3FileStorage(uri, client) },
+			lister:            func(prefix url.URL) []url.URL { return s3FileStorageLister(prefix, client) },
+			prefixes:          []string{"s3://"},
+			completionPrompts: []string{},
+		},
+	)
+
+	return nil
+}
+
+func init() {
+	if err := initializeS3Storage(); err != nil {
+		fmt.Printf("S3 initialization failed: %v\n", err)
+	}
 }

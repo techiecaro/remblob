@@ -89,7 +89,7 @@ go build -o remblob .
 | Variable | Description | Example |
 |----------|-------------|---------|
 | `EDITOR` | Your preferred text editor <br>(Needs `Wait for the files to be closed before returning` option) | `vim`, `code --wait`, `nano` |
-| `AWS_ENDPOINT` | Custom S3 endpoint URL | `https://s3.us-west-2.amazonaws.com` |
+| `AWS_ENDPOINT_URL` | Custom S3 endpoint URL | `https://s3.us-west-2.amazonaws.com` |
 | `AWS_NO_SIGN_REQUEST` | Enable anonymous S3 access | `true` |
 
 ### AWS Authentication
@@ -156,10 +156,10 @@ remblob edit s3://data/file.json.gz local-file.json
 ### Custom S3 Endpoints
 ```bash
 # MinIO or other S3-compatible storage
-AWS_ENDPOINT=https://minio.example.com remblob edit s3://bucket/file.json
+AWS_ENDPOINT_URL=https://minio.example.com remblob edit s3://bucket/file.json
 
 # DigitalOcean Spaces
-AWS_ENDPOINT=https://nyc3.digitaloceanspaces.com remblob edit s3://space/file.json
+AWS_ENDPOINT_URL=https://nyc3.digitaloceanspaces.com remblob edit s3://space/file.json
 ```
 
 ## 🔧 Command Reference
