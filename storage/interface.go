@@ -13,6 +13,17 @@ type FileStorage interface {
 	Close() error
 }
 
+// MetadataCapable interface for storage types that support metadata operations
+type MetadataCapable interface {
+	GetMetadata() map[string]string
+	SetMetadata(metadata map[string]string) error
+}
+
+// VersionCapable interface for storage types that support version tracking
+type VersionCapable interface {
+	GetVersion() string // ETag, last-modified timestamp, etc.
+}
+
 type fileStorageBuilder func(url.URL) FileStorage
 type FileLister func(url.URL) []url.URL
 
@@ -36,6 +47,19 @@ func registerFileStorage(registration registrationInfo) {
 		if _, ok := fileStorageRegister[uriPrefix.Scheme]; ok {
 			log.Fatalf("FileStorage with scheme %s already registered", uriPrefix.Scheme)
 		}
+		fileStorageRegister[uriPrefix.Scheme] = registration
+	}
+}
+
+// reregisterFileStorage allows re-registration for testing purposes
+func reregisterFileStorage(registration registrationInfo) {
+	for _, prefix := range registration.prefixes {
+		uriPrefix, err := url.Parse(prefix)
+		if err != nil {
+			log.Fatalf("Registration of %s can't progress. Can't parse it", prefix)
+		}
+
+		// Allow overwriting existing registration
 		fileStorageRegister[uriPrefix.Scheme] = registration
 	}
 }
