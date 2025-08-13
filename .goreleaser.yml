@@ -16,6 +16,12 @@ builds:
     goarch:
       - amd64
       - arm64
+    ldflags:
+      - -s -w
+      - -X techiecaro/remblob/version.Version={{.Version}}
+      - -X techiecaro/remblob/version.Commit={{.Commit}}
+      - -X techiecaro/remblob/version.Date={{.Date}}
+      - -X techiecaro/remblob/version.BuiltBy=goreleaser
 
 archives:
   - formats: [tar.gz]
