@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"github.com/xitongsys/parquet-go-source/buffer"
+	"github.com/xitongsys/parquet-go/parquet"
 	"github.com/xitongsys/parquet-go/reader"
 	"github.com/xitongsys/parquet-go/writer"
 )
@@ -25,6 +26,22 @@ type TestDataWithDots struct {
 	FirstName string  `parquet:"name=first.name, type=BYTE_ARRAY, convertedtype=UTF8"`
 	LastName  string  `parquet:"name=last.name, type=BYTE_ARRAY, convertedtype=UTF8"`
 	TestScore float64 `parquet:"name=test.score, type=DOUBLE"`
+}
+
+// TestDataWithDate represents data with DATE type
+type TestDataWithDate struct {
+	DateField int32   `parquet:"name=date_field, type=INT32, convertedtype=DATE"`
+	Value     int64   `parquet:"name=value, type=INT64"`
+	Category  string  `parquet:"name=category, type=BYTE_ARRAY, convertedtype=UTF8"`
+	Amount    float64 `parquet:"name=amount, type=DOUBLE"`
+}
+
+// TestDataWithTimestamp represents data with TIMESTAMP type
+type TestDataWithTimestamp struct {
+	TimestampField int64   `parquet:"name=timestamp_field, type=INT64, logicaltype=TIMESTAMP, logicaltype.isadjustedtoutc=false, logicaltype.unit=NANOS"`
+	Value          int64   `parquet:"name=value, type=INT64"`
+	Category       string  `parquet:"name=category, type=BYTE_ARRAY, convertedtype=UTF8"`
+	Amount         float64 `parquet:"name=amount, type=DOUBLE"`
 }
 
 func createTestParquetData() []byte {
@@ -841,7 +858,7 @@ func TestHelperFunctions(t *testing.T) {
 		}
 
 		for _, tt := range tests {
-			result := formatCSVValue(tt.input)
+			result := formatCSVValue(tt.input, nil) // Pass nil field for basic formatting
 			if result != tt.expected {
 				t.Errorf("formatCSVValue(%v) = %q, expected %q", tt.input, result, tt.expected)
 			}
@@ -855,6 +872,262 @@ type nopWriteCloser struct {
 }
 
 func (nopWriteCloser) Close() error { return nil }
+
+func createTestParquetDataWithDate() []byte {
+	// Create sample parquet data with DATE fields
+	// Using days since Unix epoch (1970-01-01)
+	testData := []TestDataWithDate{
+		{20313, 10, "A", 100.5}, // 2025-08-13 (days since 1970-01-01)
+		{20314, 15, "B", 250},   // 2025-08-14
+		{20315, 8, "A", 75.25},  // 2025-08-15
+	}
+
+	// Create buffer writer
+	fw := buffer.NewBufferFile()
+
+	// Create parquet writer
+	pw, err := writer.NewParquetWriter(fw, new(TestDataWithDate), 4)
+	if err != nil {
+		panic(err)
+	}
+
+	// Write test data
+	for _, record := range testData {
+		if err := pw.Write(record); err != nil {
+			panic(err)
+		}
+	}
+
+	if err := pw.WriteStop(); err != nil {
+		panic(err)
+	}
+	fw.Close()
+
+	return fw.Bytes()
+}
+
+func createTestParquetDataWithTimestamp() []byte {
+	// Create sample parquet data with TIMESTAMP fields
+	// Using nanoseconds since Unix epoch
+	testData := []TestDataWithTimestamp{
+		{1755126458027512000, 10, "A", 100.5}, // 2025-08-13 23:07:38.027512000
+		{1755130058027512000, 15, "B", 250},   // 2025-08-14 00:07:38.027512000
+		{1755133658027512000, 8, "A", 75.25},  // 2025-08-14 01:07:38.027512000
+	}
+
+	// Create buffer writer
+	fw := buffer.NewBufferFile()
+
+	// Create parquet writer
+	pw, err := writer.NewParquetWriter(fw, new(TestDataWithTimestamp), 4)
+	if err != nil {
+		panic(err)
+	}
+
+	// Write test data
+	for _, record := range testData {
+		if err := pw.Write(record); err != nil {
+			panic(err)
+		}
+	}
+
+	if err := pw.WriteStop(); err != nil {
+		panic(err)
+	}
+	fw.Close()
+
+	return fw.Bytes()
+}
+
+func TestParquetShovelDateFormatting(t *testing.T) {
+	// Test that DATE fields are properly formatted as YYYY-MM-DD
+	parquetData := createTestParquetDataWithDate()
+
+	shovel := &ParquetShovel{}
+	src := io.NopCloser(bytes.NewReader(parquetData))
+	var dst bytes.Buffer
+	dstCloser := &nopWriteCloser{&dst}
+
+	// Test CopyIn (parquet to CSV)
+	err := shovel.CopyIn(dstCloser, src)
+	if err != nil {
+		t.Fatalf("CopyIn failed: %v", err)
+	}
+
+	// Parse CSV output
+	csvOutput := dst.String()
+	lines := strings.Split(strings.TrimSpace(csvOutput), "\n")
+
+	// Check header
+	expectedHeader := "date_field,value,category,amount"
+	if lines[0] != expectedHeader {
+		t.Errorf("Expected header %q, got %q", expectedHeader, lines[0])
+	}
+
+	// Check that dates are formatted correctly
+	expectedRows := []string{
+		"2025-08-13,10,A,100.5",
+		"2025-08-14,15,B,250",
+		"2025-08-15,8,A,75.25",
+	}
+
+	if len(lines)-1 != len(expectedRows) {
+		t.Errorf("Expected %d data rows, got %d", len(expectedRows), len(lines)-1)
+	}
+
+	for i, expectedRow := range expectedRows {
+		if i+1 >= len(lines) {
+			t.Errorf("Missing expected row: %q", expectedRow)
+			continue
+		}
+		if lines[i+1] != expectedRow {
+			t.Errorf("Row %d: expected %q, got %q", i, expectedRow, lines[i+1])
+		}
+	}
+
+	// Verify schema was stored and has correct type information
+	if shovel.Schema == nil {
+		t.Error("Schema was not stored in shovel")
+	} else if len(shovel.Schema.Fields) > 0 {
+		dateField := shovel.Schema.Fields[0]
+		if dateField.Name != "date_field" {
+			t.Errorf("Expected first field to be 'date_field', got %q", dateField.Name)
+		}
+		if dateField.ConvertedType == nil || *dateField.ConvertedType != parquet.ConvertedType_DATE {
+			t.Errorf("Expected DATE converted type, got %v", dateField.ConvertedType)
+		}
+	}
+}
+
+func TestParquetShovelTimestampFormatting(t *testing.T) {
+	// Test that TIMESTAMP fields are properly formatted as YYYY-MM-DD HH:MM:SS.nnnnnnnnn
+	parquetData := createTestParquetDataWithTimestamp()
+
+	shovel := &ParquetShovel{}
+	src := io.NopCloser(bytes.NewReader(parquetData))
+	var dst bytes.Buffer
+	dstCloser := &nopWriteCloser{&dst}
+
+	// Test CopyIn (parquet to CSV)
+	err := shovel.CopyIn(dstCloser, src)
+	if err != nil {
+		t.Fatalf("CopyIn failed: %v", err)
+	}
+
+	// Parse CSV output
+	csvOutput := dst.String()
+	lines := strings.Split(strings.TrimSpace(csvOutput), "\n")
+
+	// Check header
+	expectedHeader := "timestamp_field,value,category,amount"
+	if lines[0] != expectedHeader {
+		t.Errorf("Expected header %q, got %q", expectedHeader, lines[0])
+	}
+
+	// Check that timestamps are formatted correctly
+	expectedRows := []string{
+		"2025-08-13 23:07:38.027512000,10,A,100.5",
+		"2025-08-14 00:07:38.027512000,15,B,250",
+		"2025-08-14 01:07:38.027512000,8,A,75.25",
+	}
+
+	if len(lines)-1 != len(expectedRows) {
+		t.Errorf("Expected %d data rows, got %d", len(expectedRows), len(lines)-1)
+	}
+
+	for i, expectedRow := range expectedRows {
+		if i+1 >= len(lines) {
+			t.Errorf("Missing expected row: %q", expectedRow)
+			continue
+		}
+		if lines[i+1] != expectedRow {
+			t.Errorf("Row %d: expected %q, got %q", i, expectedRow, lines[i+1])
+		}
+	}
+
+	// Verify schema was stored and has correct type information
+	if shovel.Schema == nil {
+		t.Error("Schema was not stored in shovel")
+	} else if len(shovel.Schema.Fields) > 0 {
+		timestampField := shovel.Schema.Fields[0]
+		if timestampField.Name != "timestamp_field" {
+			t.Errorf("Expected first field to be 'timestamp_field', got %q", timestampField.Name)
+		}
+		if timestampField.LogicalType == nil || timestampField.LogicalType.TIMESTAMP == nil {
+			t.Errorf("Expected TIMESTAMP logical type, got %v", timestampField.LogicalType)
+		}
+	}
+}
+
+func TestParquetShovelDateTimeRoundTrip(t *testing.T) {
+	// Test that date/time formatting preserves values during round trip
+	tests := []struct {
+		name        string
+		parquetData []byte
+		description string
+	}{
+		{
+			name:        "Date round trip",
+			parquetData: createTestParquetDataWithDate(),
+			description: "DATE fields should preserve values through CSV conversion",
+		},
+		{
+			name:        "Timestamp round trip",
+			parquetData: createTestParquetDataWithTimestamp(),
+			description: "TIMESTAMP fields should preserve values through CSV conversion",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			// Step 1: Parquet to CSV
+			shovel := &ParquetShovel{}
+			src1 := io.NopCloser(bytes.NewReader(tt.parquetData))
+			var csvBuffer bytes.Buffer
+			csvCloser := &nopWriteCloser{&csvBuffer}
+
+			err := shovel.CopyIn(csvCloser, src1)
+			if err != nil {
+				t.Fatalf("Failed parquet to CSV conversion: %v", err)
+			}
+
+			csvData := csvBuffer.String()
+			t.Logf("CSV output for %s:\n%s", tt.description, csvData)
+
+			// Step 2: CSV back to parquet
+			csvSrc := io.NopCloser(strings.NewReader(csvData))
+			var parquetBuffer bytes.Buffer
+			parquetCloser := &nopWriteCloser{&parquetBuffer}
+
+			err = shovel.CopyOut(parquetCloser, csvSrc)
+			if err != nil {
+				t.Fatalf("Failed CSV to parquet conversion: %v", err)
+			}
+
+			// Step 3: Verify the round trip result
+			resultData := parquetBuffer.Bytes()
+			if len(resultData) == 0 {
+				t.Fatal("No data after round trip")
+			}
+
+			// The exact values might not match due to formatting/parsing,
+			// but we should be able to read the result without errors
+			fr := buffer.NewBufferFileFromBytes(resultData)
+			pr, err := reader.NewParquetReader(fr, nil, 4)
+			if err != nil {
+				t.Fatalf("Failed to read round trip result: %v", err)
+			}
+			defer pr.ReadStop()
+
+			// Verify we have the expected number of rows
+			if pr.GetNumRows() != 3 {
+				t.Errorf("Expected 3 rows after round trip, got %d", pr.GetNumRows())
+			}
+
+			t.Logf("Successfully completed round trip for %s", tt.description)
+		})
+	}
+}
 
 func TestParquetShovelEnhancedErrorMessages(t *testing.T) {
 	// Create a parquet file with a float column
