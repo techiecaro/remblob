@@ -122,7 +122,7 @@ AWS_NO_SIGN_REQUEST=true remblob view s3://public-bucket/data.json
 # Edit and save to same location
 remblob edit s3://bucket/config.json
 
-# Edit and save to different location  
+# Edit and save to different location
 remblob edit input.json s3://bucket/output.json
 
 # View without editing
@@ -142,7 +142,7 @@ remblob view s3://warehouse/sales.parquet
 ```
 
 ### Compression Examples
-```bash  
+```bash
 # Edit compressed file
 remblob edit s3://logs/app.log.gz
 
@@ -169,11 +169,17 @@ Usage: remblob <command>
 
 Commands:
   edit <source_path> [<destination_path>]
-    Edit a remote file locally. If destination_path is omitted, 
+    Edit a remote file locally. If destination_path is omitted,
     saves back to source_path.
 
-  view <source_path>  
+  view <source_path>
     Open a remote file in read-only mode.
+
+  version [--json]
+    Show version information. Use --json for machine-readable output.
+
+  install-completions
+    Install shell completions for your shell.
 
 Flags:
   -h, --help    Show help information
@@ -201,6 +207,7 @@ Flags:
 
 ### Getting Help
 - Run `remblob --help` for usage information
+- Run `remblob version` to check your installed version
 - Check [GitHub Issues](https://github.com/techiecaro/remblob/issues) for known problems
 - Create a new issue for bugs or feature requests
 

@@ -73,10 +73,10 @@ func setupMinIOTestEnvironment(t *testing.T) *MinIOTestSetup {
 func setupMinIOEnvironment(t *testing.T, endpoint string) {
 	// Save original environment variables
 	originalVars := map[string]string{
-		"AWS_ENDPOINT_URL":         os.Getenv("AWS_ENDPOINT_URL"),
-		"AWS_ACCESS_KEY_ID":        os.Getenv("AWS_ACCESS_KEY_ID"),
-		"AWS_SECRET_ACCESS_KEY":    os.Getenv("AWS_SECRET_ACCESS_KEY"),
-		"AWS_REGION":               os.Getenv("AWS_REGION"),
+		"AWS_ENDPOINT_URL":        os.Getenv("AWS_ENDPOINT_URL"),
+		"AWS_ACCESS_KEY_ID":       os.Getenv("AWS_ACCESS_KEY_ID"),
+		"AWS_SECRET_ACCESS_KEY":   os.Getenv("AWS_SECRET_ACCESS_KEY"),
+		"AWS_REGION":              os.Getenv("AWS_REGION"),
 		"AWS_S3_FORCE_PATH_STYLE": os.Getenv("AWS_S3_FORCE_PATH_STYLE"),
 	}
 
