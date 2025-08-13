@@ -22,6 +22,8 @@ import (
 type ParquetShovel struct {
 	// Schema holds the parquet schema extracted during CopyIn for reuse in CopyOut
 	Schema *parquetSchema
+	// Metadata holds the key-value metadata from the original parquet file
+	Metadata []*parquet.KeyValue
 }
 
 // parquetSchema holds the schema information for a parquet file
@@ -65,6 +67,9 @@ func (p *ParquetShovel) CopyIn(dst io.WriteCloser, src io.ReadCloser) error {
 
 	// Store schema in shovel state
 	p.Schema = schema
+
+	// Extract and store metadata for preservation
+	p.Metadata = pr.Footer.KeyValueMetadata
 
 	// Create CSV writer
 	csvWriter := csv.NewWriter(dst)
@@ -181,6 +186,16 @@ func (p *ParquetShovel) CopyOut(dst io.WriteCloser, src io.ReadCloser) error {
 		if err := pw.Write(structRecord); err != nil {
 			return fmt.Errorf("failed to write parquet record at row %d: %w", rowIndex+1, err)
 		}
+	}
+
+	// Restore metadata if we have it (need to flush first)
+	if err := pw.Flush(true); err != nil {
+		return fmt.Errorf("failed to flush parquet writer: %w", err)
+	}
+
+	// Restore preserved metadata to maintain pandas compatibility
+	if p.Metadata != nil {
+		pw.Footer.KeyValueMetadata = p.Metadata
 	}
 
 	if err := pw.WriteStop(); err != nil {
@@ -513,12 +528,12 @@ func createStructTypeFromSchema(schema *parquetSchema) (reflect.Type, error) {
 			return nil, fmt.Errorf("failed to convert type for field %s: %w", schemaField.Name, err)
 		}
 
-		// Create proper parquet tag with type information
-		parquetType := getParquetTagType(schemaField.Type)
+		// Create proper parquet tag with type information including logical types
+		parquetType := getParquetTagTypeWithLogical(schemaField)
 		if parquetType == "" {
 			return nil, fmt.Errorf("empty parquet type for field %s", schemaField.Name)
 		}
-		tag := fmt.Sprintf(`parquet:"name=%s, type=%s"`, schemaField.Name, parquetType)
+		tag := fmt.Sprintf(`parquet:"name=%s, %s"`, schemaField.Name, parquetType)
 
 		fields[i] = reflect.StructField{
 			Name: normalizeFieldName(schemaField.Name),
@@ -548,6 +563,51 @@ func getParquetTagType(parquetType string) string {
 	default:
 		// Default to UTF8 string
 		return "BYTE_ARRAY, convertedtype=UTF8"
+	}
+}
+
+// getParquetTagTypeWithLogical converts parquet field to complete tag format including logical types
+func getParquetTagTypeWithLogical(field parquetField) string {
+	baseType := strings.ToUpper(field.Type)
+
+	// Handle logical types (takes precedence over converted types)
+	if field.LogicalType != nil {
+		if field.LogicalType.TIMESTAMP != nil {
+			// For timestamp logical type
+			return fmt.Sprintf("type=%s, logicaltype=TIMESTAMP, logicaltype.isadjustedtoutc=false, logicaltype.unit=NANOS", baseType)
+		}
+		if field.LogicalType.DATE != nil {
+			// For date logical type
+			return fmt.Sprintf("type=%s, logicaltype=DATE", baseType)
+		}
+	}
+
+	// Handle converted types
+	if field.ConvertedType != nil {
+		switch *field.ConvertedType {
+		case parquet.ConvertedType_DATE:
+			return fmt.Sprintf("type=%s, convertedtype=DATE", baseType)
+		case parquet.ConvertedType_UTF8:
+			return fmt.Sprintf("type=%s, convertedtype=UTF8", baseType)
+		}
+	}
+
+	// Fall back to basic type
+	switch baseType {
+	case "BOOLEAN":
+		return "type=BOOLEAN"
+	case "INT32":
+		return "type=INT32"
+	case "INT64":
+		return "type=INT64"
+	case "FLOAT":
+		return "type=FLOAT"
+	case "DOUBLE":
+		return "type=DOUBLE"
+	case "BYTE_ARRAY", "FIXED_LEN_BYTE_ARRAY":
+		return "type=BYTE_ARRAY, convertedtype=UTF8"
+	default:
+		return "type=BYTE_ARRAY, convertedtype=UTF8"
 	}
 }
 

@@ -2,6 +2,7 @@ package shovel
 
 import (
 	"bytes"
+	"fmt"
 	"io"
 	"reflect"
 	"strings"
@@ -42,6 +43,22 @@ type TestDataWithTimestamp struct {
 	Value          int64   `parquet:"name=value, type=INT64"`
 	Category       string  `parquet:"name=category, type=BYTE_ARRAY, convertedtype=UTF8"`
 	Amount         float64 `parquet:"name=amount, type=DOUBLE"`
+}
+
+// TestDataWithPandasIndex represents data with pandas-style index column
+type TestDataWithPandasIndex struct {
+	Value    int64   `parquet:"name=value, type=INT64"`
+	Category string  `parquet:"name=category, type=BYTE_ARRAY, convertedtype=UTF8"`
+	Amount   float64 `parquet:"name=amount, type=DOUBLE"`
+	IndexCol int64   `parquet:"name=__index_level_0__, type=INT64, logicaltype=TIMESTAMP, logicaltype.isadjustedtoutc=false, logicaltype.unit=NANOS"`
+}
+
+// TestDataWithNamedPandasIndex represents data with named pandas index
+type TestDataWithNamedPandasIndex struct {
+	Value    int64   `parquet:"name=value, type=INT64"`
+	Category string  `parquet:"name=category, type=BYTE_ARRAY, convertedtype=UTF8"`
+	Amount   float64 `parquet:"name=amount, type=DOUBLE"`
+	AnIndex  int64   `parquet:"name=an_index, type=INT64, logicaltype=TIMESTAMP, logicaltype.isadjustedtoutc=false, logicaltype.unit=NANOS"`
 }
 
 func createTestParquetData() []byte {
@@ -939,6 +956,94 @@ func createTestParquetDataWithTimestamp() []byte {
 	return fw.Bytes()
 }
 
+func createTestParquetDataWithPandasIndex() []byte {
+	// Create sample parquet data with pandas index metadata
+	testData := []TestDataWithPandasIndex{
+		{10, "A", 100.5, 1755126458027512000}, // 2025-08-13 23:07:38.027512000
+		{15, "B", 250, 1755130058027512000},   // 2025-08-14 00:07:38.027512000
+		{8, "A", 75.25, 1755133658027512000},  // 2025-08-14 01:07:38.027512000
+	}
+
+	// Create buffer writer
+	fw := buffer.NewBufferFile()
+
+	// Create parquet writer
+	pw, err := writer.NewParquetWriter(fw, new(TestDataWithPandasIndex), 4)
+	if err != nil {
+		panic(err)
+	}
+
+	// Write test data
+	for _, record := range testData {
+		if err := pw.Write(record); err != nil {
+			panic(err)
+		}
+	}
+
+	// Flush before adding metadata
+	if err := pw.Flush(true); err != nil {
+		panic(err)
+	}
+
+	// Add pandas metadata to simulate pandas-created file
+	pandasMetadata := `{"index_columns": ["__index_level_0__"], "column_indexes": [{"name": null, "field_name": null, "pandas_type": "unicode", "numpy_type": "object", "metadata": {"encoding": "UTF-8"}}], "columns": [{"name": "value", "field_name": "value", "pandas_type": "int64", "numpy_type": "int64", "metadata": null}, {"name": "category", "field_name": "category", "pandas_type": "unicode", "numpy_type": "object", "metadata": null}, {"name": "amount", "field_name": "amount", "pandas_type": "float64", "numpy_type": "float64", "metadata": null}, {"name": null, "field_name": "__index_level_0__", "pandas_type": "datetime", "numpy_type": "datetime64[ns]", "metadata": null}], "creator": {"library": "pyarrow", "version": "21.0.0"}, "pandas_version": "2.3.0"}`
+
+	pw.Footer.KeyValueMetadata = []*parquet.KeyValue{
+		{Key: "pandas", Value: &pandasMetadata},
+	}
+
+	if err := pw.WriteStop(); err != nil {
+		panic(err)
+	}
+	fw.Close()
+
+	return fw.Bytes()
+}
+
+func createTestParquetDataWithNamedPandasIndex() []byte {
+	// Create sample parquet data with named pandas index
+	testData := []TestDataWithNamedPandasIndex{
+		{10, "A", 100.5, 1755126458027512000}, // 2025-08-13 23:07:38.027512000
+		{15, "B", 250, 1755130058027512000},   // 2025-08-14 00:07:38.027512000
+		{8, "A", 75.25, 1755133658027512000},  // 2025-08-14 01:07:38.027512000
+	}
+
+	// Create buffer writer
+	fw := buffer.NewBufferFile()
+
+	// Create parquet writer
+	pw, err := writer.NewParquetWriter(fw, new(TestDataWithNamedPandasIndex), 4)
+	if err != nil {
+		panic(err)
+	}
+
+	// Write test data
+	for _, record := range testData {
+		if err := pw.Write(record); err != nil {
+			panic(err)
+		}
+	}
+
+	// Flush before adding metadata
+	if err := pw.Flush(true); err != nil {
+		panic(err)
+	}
+
+	// Add pandas metadata for named index
+	pandasMetadata := `{"index_columns": ["an_index"], "column_indexes": [{"name": null, "field_name": null, "pandas_type": "unicode", "numpy_type": "object", "metadata": {"encoding": "UTF-8"}}], "columns": [{"name": "value", "field_name": "value", "pandas_type": "int64", "numpy_type": "int64", "metadata": null}, {"name": "category", "field_name": "category", "pandas_type": "unicode", "numpy_type": "object", "metadata": null}, {"name": "amount", "field_name": "amount", "pandas_type": "float64", "numpy_type": "float64", "metadata": null}, {"name": "an_index", "field_name": "an_index", "pandas_type": "datetime", "numpy_type": "datetime64[ns]", "metadata": null}], "creator": {"library": "pyarrow", "version": "21.0.0"}, "pandas_version": "2.3.0"}`
+
+	pw.Footer.KeyValueMetadata = []*parquet.KeyValue{
+		{Key: "pandas", Value: &pandasMetadata},
+	}
+
+	if err := pw.WriteStop(); err != nil {
+		panic(err)
+	}
+	fw.Close()
+
+	return fw.Bytes()
+}
+
 func TestParquetShovelDateFormatting(t *testing.T) {
 	// Test that DATE fields are properly formatted as YYYY-MM-DD
 	parquetData := createTestParquetDataWithDate()
@@ -1126,6 +1231,287 @@ func TestParquetShovelDateTimeRoundTrip(t *testing.T) {
 
 			t.Logf("Successfully completed round trip for %s", tt.description)
 		})
+	}
+}
+
+func TestParquetShovelPandasIndexFormatting(t *testing.T) {
+	// Test that pandas index columns with TIMESTAMP type are properly formatted
+	parquetData := createTestParquetDataWithPandasIndex()
+
+	shovel := &ParquetShovel{}
+	src := io.NopCloser(bytes.NewReader(parquetData))
+	var dst bytes.Buffer
+	dstCloser := &nopWriteCloser{&dst}
+
+	// Test CopyIn (parquet to CSV)
+	err := shovel.CopyIn(dstCloser, src)
+	if err != nil {
+		t.Fatalf("CopyIn failed: %v", err)
+	}
+
+	// Parse CSV output
+	csvOutput := dst.String()
+	lines := strings.Split(strings.TrimSpace(csvOutput), "\n")
+
+	// Check header - should show __index_level_0__ as simplified name
+	expectedHeader := "value,category,amount,__index_level_0__"
+	if lines[0] != expectedHeader {
+		t.Errorf("Expected header %q, got %q", expectedHeader, lines[0])
+	}
+
+	// Check that timestamps are formatted correctly in index column
+	expectedRows := []string{
+		"10,A,100.5,2025-08-13 23:07:38.027512000",
+		"15,B,250,2025-08-14 00:07:38.027512000",
+		"8,A,75.25,2025-08-14 01:07:38.027512000",
+	}
+
+	if len(lines)-1 != len(expectedRows) {
+		t.Errorf("Expected %d data rows, got %d", len(expectedRows), len(lines)-1)
+	}
+
+	for i, expectedRow := range expectedRows {
+		if i+1 >= len(lines) {
+			t.Errorf("Missing expected row: %q", expectedRow)
+			continue
+		}
+		if lines[i+1] != expectedRow {
+			t.Errorf("Row %d: expected %q, got %q", i, expectedRow, lines[i+1])
+		}
+	}
+
+	// Verify metadata was extracted
+	if shovel.Metadata == nil {
+		t.Error("Pandas metadata was not extracted")
+	} else {
+		// Find pandas metadata
+		var pandasMeta string
+		for _, kv := range shovel.Metadata {
+			if kv.Key == "pandas" && kv.Value != nil {
+				pandasMeta = *kv.Value
+				break
+			}
+		}
+		if pandasMeta == "" {
+			t.Error("No pandas metadata found")
+		} else if !strings.Contains(pandasMeta, `"index_columns": ["__index_level_0__"]`) {
+			t.Error("Pandas metadata does not contain expected index_columns")
+		}
+	}
+}
+
+func TestParquetShovelNamedPandasIndexFormatting(t *testing.T) {
+	// Test that named pandas index columns are properly formatted
+	parquetData := createTestParquetDataWithNamedPandasIndex()
+
+	shovel := &ParquetShovel{}
+	src := io.NopCloser(bytes.NewReader(parquetData))
+	var dst bytes.Buffer
+	dstCloser := &nopWriteCloser{&dst}
+
+	// Test CopyIn (parquet to CSV)
+	err := shovel.CopyIn(dstCloser, src)
+	if err != nil {
+		t.Fatalf("CopyIn failed: %v", err)
+	}
+
+	// Parse CSV output
+	csvOutput := dst.String()
+	lines := strings.Split(strings.TrimSpace(csvOutput), "\n")
+
+	// Check header - should show an_index
+	expectedHeader := "value,category,amount,an_index"
+	if lines[0] != expectedHeader {
+		t.Errorf("Expected header %q, got %q", expectedHeader, lines[0])
+	}
+
+	// Check that timestamps are formatted correctly
+	expectedRows := []string{
+		"10,A,100.5,2025-08-13 23:07:38.027512000",
+		"15,B,250,2025-08-14 00:07:38.027512000",
+		"8,A,75.25,2025-08-14 01:07:38.027512000",
+	}
+
+	for i, expectedRow := range expectedRows {
+		if i+1 >= len(lines) {
+			t.Errorf("Missing expected row: %q", expectedRow)
+			continue
+		}
+		if lines[i+1] != expectedRow {
+			t.Errorf("Row %d: expected %q, got %q", i, expectedRow, lines[i+1])
+		}
+	}
+}
+
+func TestParquetShovelPandasIndexRoundTrip(t *testing.T) {
+	// Test that pandas index metadata is preserved during round trip
+	tests := []struct {
+		name          string
+		parquetData   []byte
+		expectedIndex string
+		description   string
+	}{
+		{
+			name:          "Unnamed pandas index",
+			parquetData:   createTestParquetDataWithPandasIndex(),
+			expectedIndex: "__index_level_0__",
+			description:   "Unnamed pandas index should preserve metadata and formatting",
+		},
+		{
+			name:          "Named pandas index",
+			parquetData:   createTestParquetDataWithNamedPandasIndex(),
+			expectedIndex: "an_index",
+			description:   "Named pandas index should preserve metadata and formatting",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			// Step 1: Parquet to CSV
+			shovel := &ParquetShovel{}
+			src1 := io.NopCloser(bytes.NewReader(tt.parquetData))
+			var csvBuffer bytes.Buffer
+			csvCloser := &nopWriteCloser{&csvBuffer}
+
+			err := shovel.CopyIn(csvCloser, src1)
+			if err != nil {
+				t.Fatalf("Failed parquet to CSV conversion: %v", err)
+			}
+
+			csvData := csvBuffer.String()
+			t.Logf("CSV output for %s:\n%s", tt.description, csvData)
+
+			// Verify CSV contains formatted timestamps
+			if !strings.Contains(csvData, "2025-08-13 23:07:38.027512000") {
+				t.Errorf("CSV output does not contain expected formatted timestamp")
+			}
+
+			// Step 2: CSV back to parquet
+			csvSrc := io.NopCloser(strings.NewReader(csvData))
+			var parquetBuffer bytes.Buffer
+			parquetCloser := &nopWriteCloser{&parquetBuffer}
+
+			err = shovel.CopyOut(parquetCloser, csvSrc)
+			if err != nil {
+				t.Fatalf("Failed CSV to parquet conversion: %v", err)
+			}
+
+			// Step 3: Verify the round trip preserved metadata and formatting
+			resultData := parquetBuffer.Bytes()
+			if len(resultData) == 0 {
+				t.Fatal("No data after round trip")
+			}
+
+			// Verify we can read the result and it has the expected metadata
+			fr := buffer.NewBufferFileFromBytes(resultData)
+			pr, err := reader.NewParquetReader(fr, nil, 4)
+			if err != nil {
+				t.Fatalf("Failed to read round trip result: %v", err)
+			}
+			defer pr.ReadStop()
+
+			// Check that metadata is preserved
+			var pandasMeta string
+			if pr.Footer.KeyValueMetadata != nil {
+				for _, kv := range pr.Footer.KeyValueMetadata {
+					if kv.Key == "pandas" && kv.Value != nil {
+						pandasMeta = *kv.Value
+						break
+					}
+				}
+			}
+
+			if pandasMeta == "" {
+				t.Error("Pandas metadata was not preserved in round trip")
+			} else {
+				expectedIndexCol := fmt.Sprintf(`"index_columns": ["%s"]`, tt.expectedIndex)
+				if !strings.Contains(pandasMeta, expectedIndexCol) {
+					t.Errorf("Pandas metadata does not contain expected index column %s. Got: %s", tt.expectedIndex, pandasMeta)
+				}
+			}
+
+			// Step 4: Verify the result can be read again with proper formatting
+			shovel2 := &ParquetShovel{}
+			src2 := io.NopCloser(bytes.NewReader(resultData))
+			var csvBuffer2 bytes.Buffer
+			csvCloser2 := &nopWriteCloser{&csvBuffer2}
+
+			err = shovel2.CopyIn(csvCloser2, src2)
+			if err != nil {
+				t.Fatalf("Failed second parquet to CSV conversion: %v", err)
+			}
+
+			csvData2 := csvBuffer2.String()
+
+			// Verify formatting is still correct after round trip
+			if !strings.Contains(csvData2, "2025-08-13 23:07:38.027512000") {
+				t.Errorf("Round trip result does not contain expected formatted timestamp")
+			}
+
+			// Verify header contains expected index column name
+			lines := strings.Split(strings.TrimSpace(csvData2), "\n")
+			if len(lines) > 0 && !strings.Contains(lines[0], tt.expectedIndex) {
+				t.Errorf("Round trip result header does not contain expected index column %s. Got: %s", tt.expectedIndex, lines[0])
+			}
+
+			t.Logf("Successfully completed round trip for %s", tt.description)
+		})
+	}
+}
+
+func TestParquetShovelMetadataPreservation(t *testing.T) {
+	// Test that various types of metadata are preserved
+	parquetData := createTestParquetDataWithPandasIndex()
+
+	shovel := &ParquetShovel{}
+	src := io.NopCloser(bytes.NewReader(parquetData))
+	var tempDst bytes.Buffer
+	tempDstCloser := &nopWriteCloser{&tempDst}
+
+	// Extract metadata by doing CopyIn
+	err := shovel.CopyIn(tempDstCloser, src)
+	if err != nil {
+		t.Fatalf("Failed to extract metadata: %v", err)
+	}
+
+	// Verify metadata was stored
+	if shovel.Metadata == nil {
+		t.Fatal("No metadata was stored")
+	}
+
+	// Look for specific metadata keys
+	hasPardasMeta := false
+	var pandaContent string
+
+	for _, kv := range shovel.Metadata {
+		if kv.Key == "pandas" {
+			hasPardasMeta = true
+			if kv.Value != nil {
+				pandaContent = *kv.Value
+			}
+		}
+	}
+
+	if !hasPardasMeta {
+		t.Error("Pandas metadata key not found")
+	}
+
+	if pandaContent == "" {
+		t.Error("Pandas metadata content is empty")
+	}
+
+	// Verify content contains expected structure
+	expectedElements := []string{
+		`"index_columns"`,
+		`"__index_level_0__"`,
+		`"pandas_type": "datetime"`,
+		`"numpy_type": "datetime64[ns]"`,
+	}
+
+	for _, expected := range expectedElements {
+		if !strings.Contains(pandaContent, expected) {
+			t.Errorf("Pandas metadata missing expected element: %s", expected)
+		}
 	}
 }
 
