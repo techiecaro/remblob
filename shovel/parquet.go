@@ -8,6 +8,7 @@ import (
 	"reflect"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/xitongsys/parquet-go-source/buffer"
 	"github.com/xitongsys/parquet-go/parquet"
@@ -21,6 +22,8 @@ import (
 type ParquetShovel struct {
 	// Schema holds the parquet schema extracted during CopyIn for reuse in CopyOut
 	Schema *parquetSchema
+	// Metadata holds the key-value metadata from the original parquet file
+	Metadata []*parquet.KeyValue
 }
 
 // parquetSchema holds the schema information for a parquet file
@@ -30,8 +33,10 @@ type parquetSchema struct {
 
 // parquetField represents a field in the parquet schema
 type parquetField struct {
-	Name string
-	Type string
+	Name          string
+	Type          string
+	ConvertedType *parquet.ConvertedType
+	LogicalType   *parquet.LogicalType
 }
 
 // CopyIn converts parquet data to CSV format for editing.
@@ -63,6 +68,9 @@ func (p *ParquetShovel) CopyIn(dst io.WriteCloser, src io.ReadCloser) error {
 	// Store schema in shovel state
 	p.Schema = schema
 
+	// Extract and store metadata for preservation
+	p.Metadata = pr.Footer.KeyValueMetadata
+
 	// Create CSV writer
 	csvWriter := csv.NewWriter(dst)
 	defer csvWriter.Flush()
@@ -92,7 +100,7 @@ func (p *ParquetShovel) CopyIn(dst io.WriteCloser, src io.ReadCloser) error {
 				return fmt.Errorf("failed to extract field values: %w", err)
 			}
 
-			if err := writeRecordAsCSV(csvWriter, recordMap, headers); err != nil {
+			if err := writeRecordAsCSV(csvWriter, recordMap, headers, schema); err != nil {
 				return fmt.Errorf("failed to write CSV record: %w", err)
 			}
 		}
@@ -180,6 +188,16 @@ func (p *ParquetShovel) CopyOut(dst io.WriteCloser, src io.ReadCloser) error {
 		}
 	}
 
+	// Restore metadata if we have it (need to flush first)
+	if err := pw.Flush(true); err != nil {
+		return fmt.Errorf("failed to flush parquet writer: %w", err)
+	}
+
+	// Restore preserved metadata to maintain pandas compatibility
+	if p.Metadata != nil {
+		pw.Footer.KeyValueMetadata = p.Metadata
+	}
+
 	if err := pw.WriteStop(); err != nil {
 		return fmt.Errorf("failed to stop parquet writer: %w", err)
 	}
@@ -197,11 +215,19 @@ func (p *ParquetShovel) CopyOut(dst io.WriteCloser, src io.ReadCloser) error {
 // Helper functions
 
 // writeRecordAsCSV writes a record map as a CSV row using the provided headers order
-func writeRecordAsCSV(csvWriter *csv.Writer, record map[string]interface{}, headers []string) error {
+func writeRecordAsCSV(csvWriter *csv.Writer, record map[string]interface{}, headers []string, schema *parquetSchema) error {
 	values := make([]string, len(headers))
 	for i, header := range headers {
 		if value, exists := record[header]; exists {
-			values[i] = formatCSVValue(value)
+			// Find the corresponding schema field for type information
+			var field *parquetField
+			for _, f := range schema.Fields {
+				if f.Name == header {
+					field = &f
+					break
+				}
+			}
+			values[i] = formatCSVValue(value, field)
 		} else {
 			values[i] = ""
 		}
@@ -210,10 +236,34 @@ func writeRecordAsCSV(csvWriter *csv.Writer, record map[string]interface{}, head
 }
 
 // formatCSVValue converts a value to its string representation for CSV output
-func formatCSVValue(value interface{}) string {
+func formatCSVValue(value interface{}, field *parquetField) string {
 	if value == nil {
 		return ""
 	}
+
+	// Handle date and datetime formatting based on schema information
+	if field != nil {
+		// Handle DATE type (days since epoch)
+		if field.ConvertedType != nil && *field.ConvertedType == parquet.ConvertedType_DATE {
+			if days, ok := value.(int32); ok {
+				// Convert days since Unix epoch to date
+				epochDate := time.Date(1970, 1, 1, 0, 0, 0, 0, time.UTC)
+				date := epochDate.AddDate(0, 0, int(days))
+				return date.Format("2006-01-02")
+			}
+		}
+
+		// Handle TIMESTAMP type (nanoseconds since epoch)
+		if field.LogicalType != nil && field.LogicalType.TIMESTAMP != nil {
+			if nanos, ok := value.(int64); ok {
+				// Convert nanoseconds since Unix epoch to timestamp
+				timestamp := time.Unix(0, nanos).UTC()
+				return timestamp.Format("2006-01-02 15:04:05.000000000")
+			}
+		}
+	}
+
+	// Default formatting for other types
 	switch v := value.(type) {
 	case string:
 		return v
@@ -280,8 +330,10 @@ func extractSchema(pr *reader.ParquetReader) (*parquetSchema, error) {
 				}
 
 				field := parquetField{
-					Name: fieldName,
-					Type: fieldType,
+					Name:          fieldName,
+					Type:          fieldType,
+					ConvertedType: element.ConvertedType,
+					LogicalType:   element.LogicalType,
 				}
 				schema.Fields = append(schema.Fields, field)
 			}
@@ -476,12 +528,12 @@ func createStructTypeFromSchema(schema *parquetSchema) (reflect.Type, error) {
 			return nil, fmt.Errorf("failed to convert type for field %s: %w", schemaField.Name, err)
 		}
 
-		// Create proper parquet tag with type information
-		parquetType := getParquetTagType(schemaField.Type)
+		// Create proper parquet tag with type information including logical types
+		parquetType := getParquetTagTypeWithLogical(schemaField)
 		if parquetType == "" {
 			return nil, fmt.Errorf("empty parquet type for field %s", schemaField.Name)
 		}
-		tag := fmt.Sprintf(`parquet:"name=%s, type=%s"`, schemaField.Name, parquetType)
+		tag := fmt.Sprintf(`parquet:"name=%s, %s"`, schemaField.Name, parquetType)
 
 		fields[i] = reflect.StructField{
 			Name: normalizeFieldName(schemaField.Name),
@@ -511,6 +563,51 @@ func getParquetTagType(parquetType string) string {
 	default:
 		// Default to UTF8 string
 		return "BYTE_ARRAY, convertedtype=UTF8"
+	}
+}
+
+// getParquetTagTypeWithLogical converts parquet field to complete tag format including logical types
+func getParquetTagTypeWithLogical(field parquetField) string {
+	baseType := strings.ToUpper(field.Type)
+
+	// Handle logical types (takes precedence over converted types)
+	if field.LogicalType != nil {
+		if field.LogicalType.TIMESTAMP != nil {
+			// For timestamp logical type
+			return fmt.Sprintf("type=%s, logicaltype=TIMESTAMP, logicaltype.isadjustedtoutc=false, logicaltype.unit=NANOS", baseType)
+		}
+		if field.LogicalType.DATE != nil {
+			// For date logical type
+			return fmt.Sprintf("type=%s, logicaltype=DATE", baseType)
+		}
+	}
+
+	// Handle converted types
+	if field.ConvertedType != nil {
+		switch *field.ConvertedType {
+		case parquet.ConvertedType_DATE:
+			return fmt.Sprintf("type=%s, convertedtype=DATE", baseType)
+		case parquet.ConvertedType_UTF8:
+			return fmt.Sprintf("type=%s, convertedtype=UTF8", baseType)
+		}
+	}
+
+	// Fall back to basic type
+	switch baseType {
+	case "BOOLEAN":
+		return "type=BOOLEAN"
+	case "INT32":
+		return "type=INT32"
+	case "INT64":
+		return "type=INT64"
+	case "FLOAT":
+		return "type=FLOAT"
+	case "DOUBLE":
+		return "type=DOUBLE"
+	case "BYTE_ARRAY", "FIXED_LEN_BYTE_ARRAY":
+		return "type=BYTE_ARRAY, convertedtype=UTF8"
+	default:
+		return "type=BYTE_ARRAY, convertedtype=UTF8"
 	}
 }
 
@@ -582,8 +679,8 @@ func convertMapToStruct(record map[string]interface{}, structType reflect.Type, 
 			continue
 		}
 
-		// Convert and set the value
-		if err := setFieldValue(fieldValue, mapValue); err != nil {
+		// Convert and set the value with schema-aware parsing
+		if err := setFieldValue(fieldValue, mapValue, &field); err != nil {
 			return nil, fmt.Errorf("field '%s' at row %d: cannot convert %q to %s",
 				field.Name, rowNumber, fmt.Sprintf("%v", mapValue), fieldValue.Type())
 		}
@@ -593,7 +690,7 @@ func convertMapToStruct(record map[string]interface{}, structType reflect.Type, 
 }
 
 // setFieldValue sets a reflect.Value with proper type conversion
-func setFieldValue(fieldValue reflect.Value, value interface{}) error {
+func setFieldValue(fieldValue reflect.Value, value interface{}, field *parquetField) error {
 	if value == nil {
 		return nil // Leave as zero value
 	}
@@ -605,6 +702,30 @@ func setFieldValue(fieldValue reflect.Value, value interface{}) error {
 	if sourceValue.Type() == targetType {
 		fieldValue.Set(sourceValue)
 		return nil
+	}
+
+	// Handle date/timestamp parsing if we have schema information
+	if field != nil && targetType.Kind() == reflect.Int32 && field.ConvertedType != nil && *field.ConvertedType == parquet.ConvertedType_DATE {
+		// Parse date string back to days since epoch
+		if dateStr, ok := value.(string); ok {
+			if parsedDate, err := time.Parse("2006-01-02", dateStr); err == nil {
+				epochDate := time.Date(1970, 1, 1, 0, 0, 0, 0, time.UTC)
+				days := int32(parsedDate.Sub(epochDate).Hours() / 24)
+				fieldValue.SetInt(int64(days))
+				return nil
+			}
+		}
+	}
+
+	if field != nil && targetType.Kind() == reflect.Int64 && field.LogicalType != nil && field.LogicalType.TIMESTAMP != nil {
+		// Parse timestamp string back to nanoseconds since epoch
+		if timestampStr, ok := value.(string); ok {
+			if parsedTime, err := time.Parse("2006-01-02 15:04:05.000000000", timestampStr); err == nil {
+				nanos := parsedTime.UnixNano()
+				fieldValue.SetInt(nanos)
+				return nil
+			}
+		}
 	}
 
 	// Handle string conversions - this is critical for type widening
