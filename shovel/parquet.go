@@ -3,6 +3,7 @@ package shovel
 import (
 	"bytes"
 	"encoding/csv"
+	"encoding/json"
 	"fmt"
 	"io"
 	"reflect"
@@ -71,15 +72,21 @@ func (p *ParquetShovel) CopyIn(dst io.WriteCloser, src io.ReadCloser) error {
 	// Extract and store metadata for preservation
 	p.Metadata = pr.Footer.KeyValueMetadata
 
+	// Reorder fields for CSV display (index columns first)
+	reorderedFields := reorderFieldsForCSV(schema.Fields, p.Metadata)
+
 	// Create CSV writer
 	csvWriter := csv.NewWriter(dst)
 	defer csvWriter.Flush()
 
-	// Use schema to determine headers
-	headers := make([]string, len(schema.Fields))
-	for i, field := range schema.Fields {
+	// Use reordered schema to determine headers for CSV display
+	headers := make([]string, len(reorderedFields))
+	for i, field := range reorderedFields {
 		headers[i] = field.Name
 	}
+
+	// Update schema with reordered fields for consistent processing
+	csvSchema := &parquetSchema{Fields: reorderedFields}
 
 	// Write CSV header
 	if err := csvWriter.Write(headers); err != nil {
@@ -100,7 +107,7 @@ func (p *ParquetShovel) CopyIn(dst io.WriteCloser, src io.ReadCloser) error {
 				return fmt.Errorf("failed to extract field values: %w", err)
 			}
 
-			if err := writeRecordAsCSV(csvWriter, recordMap, headers, schema); err != nil {
+			if err := writeRecordAsCSV(csvWriter, recordMap, headers, csvSchema); err != nil {
 				return fmt.Errorf("failed to write CSV record: %w", err)
 			}
 		}
@@ -151,6 +158,7 @@ func (p *ParquetShovel) CopyOut(dst io.WriteCloser, src io.ReadCloser) error {
 
 	// Use stored schema if available, otherwise infer from data
 	var schemaToUse *parquetSchema
+
 	if p.Schema != nil {
 		schemaToUse = p.Schema
 	} else {
@@ -213,6 +221,114 @@ func (p *ParquetShovel) CopyOut(dst io.WriteCloser, src io.ReadCloser) error {
 }
 
 // Helper functions
+
+// reorderFieldsForCSV reorders fields to put index columns first using pandas metadata
+func reorderFieldsForCSV(fields []parquetField, metadata []*parquet.KeyValue) []parquetField {
+	// Get index columns from pandas metadata
+	indexColumns := getIndexColumnsFromMetadata(metadata)
+	if len(indexColumns) == 0 {
+		// No pandas metadata found, return original order
+		return fields
+	}
+
+	// Separate index columns from regular columns
+	var indexFields []parquetField
+	var regularFields []parquetField
+
+	// Create a set for faster lookup
+	indexSet := make(map[string]bool)
+	for _, indexCol := range indexColumns {
+		indexSet[indexCol] = true
+	}
+
+	for _, field := range fields {
+		if indexSet[field.Name] {
+			indexFields = append(indexFields, field)
+		} else {
+			regularFields = append(regularFields, field)
+		}
+	}
+
+	// Combine index fields first, then regular fields
+	reorderedFields := make([]parquetField, 0, len(fields))
+	reorderedFields = append(reorderedFields, indexFields...)
+	reorderedFields = append(reorderedFields, regularFields...)
+
+	return reorderedFields
+}
+
+// getIndexColumnsFromMetadata extracts index column names from pandas metadata
+func getIndexColumnsFromMetadata(metadata []*parquet.KeyValue) []string {
+	if metadata == nil {
+		return nil
+	}
+
+	var pandasMetadata string
+	for _, kv := range metadata {
+		if kv.Key == "pandas" && kv.Value != nil {
+			pandasMetadata = *kv.Value
+			break
+		}
+	}
+
+	if pandasMetadata == "" {
+		return nil
+	}
+
+	// Parse the pandas metadata JSON to extract index information
+	// Pandas stores index info in a structure like:
+	// {"index_columns": ["column_name"], "columns": [...]}
+	var pandasInfo struct {
+		IndexColumns []string `json:"index_columns"`
+	}
+
+	// Try to parse as JSON
+	if err := json.Unmarshal([]byte(pandasMetadata), &pandasInfo); err != nil {
+		return nil
+	}
+
+	return pandasInfo.IndexColumns
+}
+
+// restoreOriginalFieldOrder reorders schema fields back to their original parquet order
+func restoreOriginalFieldOrder(schema *parquetSchema, originalOrder []string, csvHeaders []string) *parquetSchema {
+	// Create a map of field name to field for quick lookup
+	fieldMap := make(map[string]parquetField)
+	for _, field := range schema.Fields {
+		fieldMap[field.Name] = field
+	}
+
+	// Rebuild schema in original order, including any new fields from CSV
+	restoredFields := make([]parquetField, 0, len(originalOrder))
+	usedFields := make(map[string]bool)
+
+	// First, add fields in original order
+	for _, fieldName := range originalOrder {
+		if field, exists := fieldMap[fieldName]; exists {
+			restoredFields = append(restoredFields, field)
+			usedFields[fieldName] = true
+		}
+	}
+
+	// Then add any new fields that weren't in the original schema
+	for _, csvHeader := range csvHeaders {
+		if !usedFields[csvHeader] {
+			if field, exists := fieldMap[csvHeader]; exists {
+				restoredFields = append(restoredFields, field)
+			}
+		}
+	}
+
+	return &parquetSchema{Fields: restoredFields}
+}
+
+// reorderRecordData reorders record data to match the specified field order
+func reorderRecordData(record map[string]interface{}, fieldOrder []string) map[string]interface{} {
+	// This function doesn't actually need to reorder the map data
+	// since maps are unordered by nature. The ordering happens in convertMapToStruct
+	// based on the schema field order. Just return the original record.
+	return record
+}
 
 // writeRecordAsCSV writes a record map as a CSV row using the provided headers order
 func writeRecordAsCSV(csvWriter *csv.Writer, record map[string]interface{}, headers []string, schema *parquetSchema) error {
