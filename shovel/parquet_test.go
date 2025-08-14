@@ -1254,16 +1254,16 @@ func TestParquetShovelPandasIndexFormatting(t *testing.T) {
 	lines := strings.Split(strings.TrimSpace(csvOutput), "\n")
 
 	// Check header - should show __index_level_0__ as simplified name
-	expectedHeader := "value,category,amount,__index_level_0__"
+	expectedHeader := "__index_level_0__,value,category,amount"
 	if lines[0] != expectedHeader {
 		t.Errorf("Expected header %q, got %q", expectedHeader, lines[0])
 	}
 
 	// Check that timestamps are formatted correctly in index column
 	expectedRows := []string{
-		"10,A,100.5,2025-08-13 23:07:38.027512000",
-		"15,B,250,2025-08-14 00:07:38.027512000",
-		"8,A,75.25,2025-08-14 01:07:38.027512000",
+		"2025-08-13 23:07:38.027512000,10,A,100.5",
+		"2025-08-14 00:07:38.027512000,15,B,250",
+		"2025-08-14 01:07:38.027512000,8,A,75.25",
 	}
 
 	if len(lines)-1 != len(expectedRows) {
@@ -1320,16 +1320,16 @@ func TestParquetShovelNamedPandasIndexFormatting(t *testing.T) {
 	lines := strings.Split(strings.TrimSpace(csvOutput), "\n")
 
 	// Check header - should show an_index
-	expectedHeader := "value,category,amount,an_index"
+	expectedHeader := "an_index,value,category,amount"
 	if lines[0] != expectedHeader {
 		t.Errorf("Expected header %q, got %q", expectedHeader, lines[0])
 	}
 
 	// Check that timestamps are formatted correctly
 	expectedRows := []string{
-		"10,A,100.5,2025-08-13 23:07:38.027512000",
-		"15,B,250,2025-08-14 00:07:38.027512000",
-		"8,A,75.25,2025-08-14 01:07:38.027512000",
+		"2025-08-13 23:07:38.027512000,10,A,100.5",
+		"2025-08-14 00:07:38.027512000,15,B,250",
+		"2025-08-14 01:07:38.027512000,8,A,75.25",
 	}
 
 	for i, expectedRow := range expectedRows {
@@ -1341,6 +1341,230 @@ func TestParquetShovelNamedPandasIndexFormatting(t *testing.T) {
 			t.Errorf("Row %d: expected %q, got %q", i, expectedRow, lines[i+1])
 		}
 	}
+}
+
+func TestParquetShovelColumnOrderPreservation(t *testing.T) {
+	// Following the exact test plan:
+	// 1. Prepare a parquet file with index at the end and pandas metadata
+	// 2. Run CopyIn and log CSV headers
+	// 3. Run CopyOut to new buffer
+	// 4. Use xitongsys/parquet-go to check column order in new buffer
+	// 5. Assert orders of all 3 headers
+
+	// Step 1: Create parquet file with index at the end (original order: value, category, amount, __index_level_0__)
+	parquetData := createTestParquetDataWithPandasIndex() // This has the index at the end
+
+	// Verify the original parquet column order using xitongsys/parquet-go directly
+	fr1 := buffer.NewBufferFileFromBytes(parquetData)
+	pr1, err := reader.NewParquetReader(fr1, nil, 4)
+	if err != nil {
+		t.Fatalf("Failed to read original parquet: %v", err)
+	}
+
+	originalSchema, err := extractSchema(pr1)
+	if err != nil {
+		t.Fatalf("Failed to extract original schema: %v", err)
+	}
+	pr1.ReadStop()
+
+	originalParquetOrder := make([]string, len(originalSchema.Fields))
+	for i, field := range originalSchema.Fields {
+		originalParquetOrder[i] = field.Name
+	}
+	t.Logf("1. Original parquet column order: %v", originalParquetOrder)
+
+	// Step 2: Run CopyIn and log CSV headers
+	shovel := &ParquetShovel{}
+	src := io.NopCloser(bytes.NewReader(parquetData))
+	var csvBuffer bytes.Buffer
+	csvCloser := &nopWriteCloser{&csvBuffer}
+
+	err = shovel.CopyIn(csvCloser, src)
+	if err != nil {
+		t.Fatalf("CopyIn failed: %v", err)
+	}
+
+	csvOutput := csvBuffer.String()
+	csvLines := strings.Split(strings.TrimSpace(csvOutput), "\n")
+	csvHeaders := strings.Split(csvLines[0], ",")
+	t.Logf("2. CSV headers after CopyIn: %v", csvHeaders)
+
+	// Step 3: Run CopyOut to new buffer (simulating edit file1.parquet -> file2.parquet)
+	csvSrc := io.NopCloser(strings.NewReader(csvOutput))
+	var newParquetBuffer bytes.Buffer
+	newParquetCloser := &nopWriteCloser{&newParquetBuffer}
+
+	err = shovel.CopyOut(newParquetCloser, csvSrc)
+	if err != nil {
+		t.Fatalf("CopyOut failed: %v", err)
+	}
+
+	// Step 4: Use xitongsys/parquet-go to check column order in new buffer
+	newParquetData := newParquetBuffer.Bytes()
+	fr2 := buffer.NewBufferFileFromBytes(newParquetData)
+	pr2, err := reader.NewParquetReader(fr2, nil, 4)
+	if err != nil {
+		t.Fatalf("Failed to read new parquet: %v", err)
+	}
+
+	newSchema, err := extractSchema(pr2)
+	if err != nil {
+		t.Fatalf("Failed to extract new schema: %v", err)
+	}
+	pr2.ReadStop()
+
+	newParquetOrder := make([]string, len(newSchema.Fields))
+	for i, field := range newSchema.Fields {
+		newParquetOrder[i] = field.Name
+	}
+	t.Logf("3. New parquet column order after CopyOut: %v", newParquetOrder)
+
+	// Step 5: Assert orders of all 3 headers
+	t.Logf("\nSUMMARY:")
+	t.Logf("Original parquet order: %v", originalParquetOrder)
+	t.Logf("CSV display order:     %v", csvHeaders)
+	t.Logf("Final parquet order:   %v", newParquetOrder)
+
+	// Assert: CSV should show index first (pandas-like display)
+	expectedCSVOrder := []string{"__index_level_0__", "value", "category", "amount"}
+	if !slicesEqual(csvHeaders, expectedCSVOrder) {
+		t.Errorf("CSV headers wrong order: expected %v, got %v", expectedCSVOrder, csvHeaders)
+	}
+
+	// Assert: Final parquet should match original parquet order (preservation)
+	if !slicesEqual(newParquetOrder, originalParquetOrder) {
+		t.Errorf("CRITICAL: Parquet column order not preserved!")
+		t.Errorf("Expected: %v", originalParquetOrder)
+		t.Errorf("Got:      %v", newParquetOrder)
+		t.Errorf("This means the original order restoration logic is not working!")
+	} else {
+		t.Logf("✓ Original parquet column order successfully preserved")
+	}
+
+	// Verify CSV display is different from parquet order (index moved to front)
+	if slicesEqual(csvHeaders, originalParquetOrder) {
+		t.Errorf("CSV headers should be reordered for display, but they match original parquet order")
+	} else {
+		t.Logf("✓ CSV display correctly shows index columns first")
+	}
+}
+
+func TestParquetShovelRestoreLogicActuallyNeeded(t *testing.T) {
+	// This test deliberately breaks the schema to see if simplified logic preserves user changes
+	parquetData := createTestParquetDataWithPandasIndex()
+
+	// Get original parquet order for comparison
+	fr0 := buffer.NewBufferFileFromBytes(parquetData)
+	pr0, err := reader.NewParquetReader(fr0, nil, 4)
+	if err != nil {
+		t.Fatalf("Failed to read original parquet: %v", err)
+	}
+	originalSchema, err := extractSchema(pr0)
+	if err != nil {
+		t.Fatalf("Failed to extract original schema: %v", err)
+	}
+	pr0.ReadStop()
+
+	originalParquetOrder := make([]string, len(originalSchema.Fields))
+	for i, field := range originalSchema.Fields {
+		originalParquetOrder[i] = field.Name
+	}
+
+	// Step 1: Extract schema normally
+	shovel := &ParquetShovel{}
+	src := io.NopCloser(bytes.NewReader(parquetData))
+	var csvBuffer bytes.Buffer
+	csvCloser := &nopWriteCloser{&csvBuffer}
+
+	err = shovel.CopyIn(csvCloser, src)
+	if err != nil {
+		t.Fatalf("CopyIn failed: %v", err)
+	}
+
+	t.Logf("Original field order: %v", originalParquetOrder)
+
+	// Step 2: DELIBERATELY CORRUPT the schema by reordering it to match CSV order
+	csvOutput := csvBuffer.String()
+	csvLines := strings.Split(strings.TrimSpace(csvOutput), "\n")
+	csvHeaders := strings.Split(csvLines[0], ",")
+	t.Logf("CSV header order: %v", csvHeaders)
+
+	// Create a corrupted schema that matches CSV order (index first)
+	corruptedFields := make([]parquetField, len(shovel.Schema.Fields))
+	fieldMap := make(map[string]parquetField)
+	for _, field := range shovel.Schema.Fields {
+		fieldMap[field.Name] = field
+	}
+
+	// Reorder fields to match CSV headers (this simulates what would happen without restore logic)
+	for i, csvHeader := range csvHeaders {
+		if field, exists := fieldMap[csvHeader]; exists {
+			corruptedFields[i] = field
+		}
+	}
+
+	// BREAK the schema by setting it to corrupted order
+	shovel.Schema = &parquetSchema{Fields: corruptedFields}
+	t.Logf("Deliberately corrupted schema order: %v", csvHeaders)
+
+	// Step 3: Now run CopyOut - this should either:
+	// - Restore original order if restore logic works
+	// - Keep corrupted order if restore logic doesn't work
+	csvSrc := io.NopCloser(strings.NewReader(csvOutput))
+	var newParquetBuffer bytes.Buffer
+	newParquetCloser := &nopWriteCloser{&newParquetBuffer}
+
+	err = shovel.CopyOut(newParquetCloser, csvSrc)
+	if err != nil {
+		t.Fatalf("CopyOut failed: %v", err)
+	}
+
+	// Step 4: Check if order was restored
+	newParquetData := newParquetBuffer.Bytes()
+	fr := buffer.NewBufferFileFromBytes(newParquetData)
+	pr, err := reader.NewParquetReader(fr, nil, 4)
+	if err != nil {
+		t.Fatalf("Failed to read new parquet: %v", err)
+	}
+
+	newSchema, err := extractSchema(pr)
+	if err != nil {
+		t.Fatalf("Failed to extract new schema: %v", err)
+	}
+	pr.ReadStop()
+
+	newParquetOrder := make([]string, len(newSchema.Fields))
+	for i, field := range newSchema.Fields {
+		newParquetOrder[i] = field.Name
+	}
+
+	t.Logf("\nCOMPARISON (Simplified Logic - User Changes Preserved):")
+	t.Logf("Original parquet order: %v", originalParquetOrder)
+	t.Logf("Corrupted schema order: %v", csvHeaders)
+	t.Logf("Final parquet order:    %v", newParquetOrder)
+
+	// With simplified logic: user changes should be preserved
+	// If user reorders CSV columns, that should be reflected in the output parquet
+	if slicesEqual(newParquetOrder, csvHeaders) {
+		t.Logf("✓ Simplified logic working - user column reordering preserved")
+	} else {
+		t.Errorf("Unexpected behavior: final order doesn't match user's CSV order")
+		t.Errorf("Expected: %v", csvHeaders)
+		t.Errorf("Got:      %v", newParquetOrder)
+	}
+}
+
+// Helper function to compare slices
+func slicesEqual(a, b []string) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := range a {
+		if a[i] != b[i] {
+			return false
+		}
+	}
+	return true
 }
 
 func TestParquetShovelPandasIndexRoundTrip(t *testing.T) {
@@ -1448,7 +1672,7 @@ func TestParquetShovelPandasIndexRoundTrip(t *testing.T) {
 				t.Errorf("Round trip result does not contain expected formatted timestamp")
 			}
 
-			// Verify header contains expected index column name
+			// Verify header contains expected index column name (still should show index first in CSV)
 			lines := strings.Split(strings.TrimSpace(csvData2), "\n")
 			if len(lines) > 0 && !strings.Contains(lines[0], tt.expectedIndex) {
 				t.Errorf("Round trip result header does not contain expected index column %s. Got: %s", tt.expectedIndex, lines[0])
