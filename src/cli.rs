@@ -1,6 +1,10 @@
+use crate::completion::{path_completer, ZshNospace};
+use crate::storage::get_file_storage;
+use clap::{Args, CommandFactory, Parser, Subcommand};
+use clap_complete::engine::ArgValueCompleter;
+use clap_complete::env::EnvCompleter;
+use clap_complete::CompleteEnv;
 use std::path::{Path, PathBuf};
-
-use clap::{Args, Parser, Subcommand};
 use url::{ParseError, Url};
 
 #[derive(Debug, Parser)]
@@ -14,6 +18,18 @@ impl Cli {
     pub fn run(&self) -> Result<(), Box<dyn std::error::Error>> {
         self.command.run()
     }
+
+    /// Check if this is a dynamic completion request and handle it
+    pub fn try_complete() -> bool {
+        // Check if this is a runtime completion request (user hit TAB)
+        if std::env::var("COMPLETE").is_ok() {
+            // Use vanilla CompleteEnv - just return completion values
+            let complete_env = CompleteEnv::with_factory(Self::command);
+            complete_env.complete();
+            return true;
+        }
+        false
+    }
 }
 
 #[derive(Debug, Subcommand)]
@@ -23,6 +39,9 @@ enum Commands {
 
     /// Views a remote blob.
     View(ViewCmd),
+
+    /// Generate dynamic shell completions
+    Completions(CompletionsCmd),
 }
 
 impl Commands {
@@ -30,6 +49,7 @@ impl Commands {
         match self {
             Commands::Edit(cmd) => cmd.run(),
             Commands::View(cmd) => cmd.run(),
+            Commands::Completions(cmd) => cmd.run(),
         }
     }
 }
@@ -63,13 +83,57 @@ impl EditCmd {
 #[derive(Debug, Args)]
 struct ViewCmd {
     /// Location of the file to view.
-    #[arg(value_parser = parse_file_location)]
+    #[arg(value_parser = parse_file_location, add = ArgValueCompleter::new(path_completer))]
     source_path: Url,
 }
 
 impl ViewCmd {
     fn run(&self) -> Result<(), Box<dyn std::error::Error>> {
         println!("Viewing: {}", self.source_path);
+        let mut fs = get_file_storage(self.source_path.clone())?;
+
+        // Create a buffer to read into
+        let mut buf = vec![0u8; 1024]; // 1KB buffer
+
+        // Read data from storage
+        let bytes_read = fs.read(&mut buf)?;
+
+        // Convert to string and print (assuming it's text)
+        if bytes_read > 0 {
+            let content = String::from_utf8_lossy(&buf[..bytes_read]);
+            println!("File content ({} bytes):\n{}", bytes_read, content);
+        } else {
+            println!("File is empty or could not be read");
+        }
+
+        Ok(())
+    }
+}
+
+#[derive(Debug, Args)]
+struct CompletionsCmd {
+    /// Shell type (bash, zsh, fish, etc.)
+    shell: String,
+}
+
+impl CompletionsCmd {
+    fn run(&self) -> Result<(), Box<dyn std::error::Error>> {
+        // Prepend our custom ZshNospace to default shells
+        let default_shells = clap_complete::env::Shells::builtins();
+        let mut custom_shells: Vec<&dyn EnvCompleter> = vec![&ZshNospace];
+        custom_shells.extend(default_shells.iter());
+
+        let shells = clap_complete::env::Shells(Box::leak(custom_shells.into_boxed_slice()));
+
+        // Set the shell type and generate completion script
+        unsafe {
+            std::env::set_var("COMPLETE", self.shell.clone());
+        }
+
+        let complete_env = CompleteEnv::with_factory(Cli::command)
+            .shells(shells);
+
+        complete_env.complete();
         Ok(())
     }
 }

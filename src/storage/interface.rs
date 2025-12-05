@@ -41,3 +41,13 @@ pub fn get_file_storage(url: Url) -> Result<Box<dyn FileStorage>, Box<dyn std::e
 
     reg_info.create(url)
 }
+
+pub fn list_schemas() -> Result<Vec<String>, Box<dyn std::error::Error>> {
+    Lazy::force(&STORAGE_REGISTRY);
+
+    let registry = STORAGE_REGISTRY
+        .read()
+        .map_err(|_| "Storage registry unavailable")?;
+
+    Ok(registry.keys().map(|x| x.to_string()).collect())
+}
