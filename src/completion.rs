@@ -80,44 +80,41 @@ impl EnvCompleter for ZshNospace {
         // Modified ZSH script with nospace handling
         let script = r#"#compdef BIN
 function _clap_dynamic_completer_NAME() {
-    local _CLAP_COMPLETE_INDEX=$(expr $CURRENT - 1)
-    local _CLAP_IFS=$'\n'
-
-    local completions=("${(@f)$( \
-        _CLAP_IFS="$_CLAP_IFS" \
-        _CLAP_COMPLETE_INDEX="$_CLAP_COMPLETE_INDEX" \
-        VAR="zsh" \
-        COMPLETER -- "${words[@]}" 2>/dev/null \
+    local completions=("${(@f)$(
+        VAR=zsh \
+        _CLAP_COMPLETE_INDEX=$((CURRENT - 1)) \
+        COMPLETER -- "${words[@]}" 2>/dev/null
     )}")
 
-    if [[ -n $completions ]]; then
-        # Smart nospace handling for path-like completions
-        local has_suffix=false
-        for comp in $completions; do
-            if [[ "$comp" =~ '[=/:]$' ]]; then
-                has_suffix=true
-                break
-            fi
-        done
+    [[ -z $completions ]] && return
 
-        if [[ $has_suffix == true ]]; then
-            # Manually add completions without trailing space
-            for comp in $completions; do
-                # Remove escaped colons temporarily to check for description separator
-                local temp="${comp//\\:}"
-                if [[ "$temp" == *:* ]]; then
-                    # Has unescaped colon (description): split on it
-                    local value="${comp%%:*}"
-                    value="${value//\\:/:}"
-                else
-                    # No description: just unescape
-                    local value="${comp//\\:/:}"
-                fi
-                compadd -S '' -- "$value"
-            done
+    local -a values=() descs=()
+
+    for comp in $completions; do
+        local temp="${comp//\\:}"
+        if [[ "$temp" == *:* ]]; then
+            local value="${comp%%:*}"
+            local desc="${comp#*:}"
+            value="${value//\\:/:}"
+            values+=("$value")
+            descs+=("$value  ($desc)")
         else
-            _describe 'values' completions
+            local value="${comp//\\:/:}"
+            values+=("$value")
+            descs+=("$value")
         fi
+    done
+
+    # Check if any value needs no-space
+    local needs_nosuffix=false
+    for v in $values; do
+        [[ "$v" == *[=/] ]] && needs_nosuffix=true && break
+    done
+
+    if [[ $needs_nosuffix == true ]]; then
+        compadd -l -d descs -S '' -- "${values[@]}"
+    else
+        _describe 'values' completions
     fi
 }
 
