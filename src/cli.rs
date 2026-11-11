@@ -1,11 +1,10 @@
 use crate::completion::{path_completer, ZshNospace};
-use crate::storage::get_file_storage;
+use crate::storage::{get_file_storage, str_to_url};
 use clap::{Args, CommandFactory, Parser, Subcommand};
 use clap_complete::engine::ArgValueCompleter;
 use clap_complete::env::EnvCompleter;
 use clap_complete::CompleteEnv;
-use std::path::{Path, PathBuf};
-use url::{ParseError, Url};
+use url::Url;
 
 #[derive(Debug, Parser)]
 #[command(version, about, long_about = None)]
@@ -57,11 +56,11 @@ impl Commands {
 #[derive(Debug, Args)]
 struct EditCmd {
     /// Location of the file to edit.
-    #[arg(value_parser = parse_file_location)]
+    #[arg(value_parser = str_to_url)]
     source_path: Url,
 
     /// Final location of the edited file, if different.
-    #[arg(value_parser = parse_file_location)]
+    #[arg(value_parser = str_to_url)]
     destination_path: Option<Url>,
 }
 
@@ -83,7 +82,7 @@ impl EditCmd {
 #[derive(Debug, Args)]
 struct ViewCmd {
     /// Location of the file to view.
-    #[arg(value_parser = parse_file_location, add = ArgValueCompleter::new(path_completer))]
+    #[arg(value_parser = str_to_url, add = ArgValueCompleter::new(path_completer))]
     source_path: Url,
 }
 
@@ -135,22 +134,5 @@ impl CompletionsCmd {
 
         complete_env.complete();
         Ok(())
-    }
-}
-
-fn parse_file_location(input: &str) -> Result<Url, String> {
-    match Url::parse(input) {
-        Ok(url) => Ok(url),
-        Err(ParseError::RelativeUrlWithoutBase) => {
-            let absolute_path = if Path::new(input).is_absolute() {
-                PathBuf::from(input)
-            } else {
-                std::env::current_dir()
-                    .map_err(|e| format!("Can't get current directory: {}", e))?
-                    .join(input)
-            };
-            Url::from_file_path(absolute_path).map_err(|_| "Failed to create file URL".to_string())
-        }
-        Err(other) => Err(other.to_string()),
     }
 }

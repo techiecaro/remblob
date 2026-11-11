@@ -30,21 +30,34 @@ pub fn path_completer(current: &std::ffi::OsStr) -> Vec<CompletionCandidate> {
         return vec![];
     };
 
-    let mut completions: Vec<CompletionCandidate> = crate::storage::list_schemas()
+    let schemes: Vec<CompletionCandidate> = crate::storage::list_schemas()
         .unwrap_or_default()
         .iter()
         .map(|s| CompletionCandidate::new(format!("{s}://")).hide(false))
         .collect();
 
-    completions.push(CompletionCandidate::new("./").hide(false));
-    completions.push(CompletionCandidate::new("testA").hide(false));
-    completions.push(CompletionCandidate::new("testB").hide(false));
+    // if current_str.is_empty() {
+    //     return schemes;
+    // }
 
-    if current_str.is_empty() {
-        return completions;
-    }
+    let Ok(url) = crate::storage::str_to_url(current_str) else {
+        return schemes;
+    };
 
-    completions
+    eprintln!("DEBUG url {}", url);
+    eprintln!("DEBUG str {:?}", current_str);
+
+    let Ok(paths) = crate::storage::list_paths_for_url(current_str) else {
+        return schemes;
+    };
+
+    eprintln!("DEBUG paths {}", paths.join(";"));
+
+    paths
+        .iter()
+        .map(|s| CompletionCandidate::new(s).hide(false))
+        .chain(schemes)
+        .collect()
 }
 
 impl EnvCompleter for ZshNospace {
@@ -135,7 +148,6 @@ compdef _clap_dynamic_completer_NAME BIN"#
         _buf: &mut dyn Write,
     ) -> Result<(), std::io::Error> {
         // Delegate to default implementation
-        println!("AAAA?");
         Ok(())
     }
 }

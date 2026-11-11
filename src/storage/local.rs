@@ -1,6 +1,6 @@
 use std::{
     fs::{File, OpenOptions},
-    path::PathBuf,
+    path::{Path, PathBuf},
 };
 
 use itertools::Itertools;
@@ -79,15 +79,34 @@ impl std::io::Write for LocalFileStorage {
 pub struct LocalFileStorageProvider;
 
 impl LocalFileStorageProvider {
-    fn uri_to_path(&self, url: Url) -> PathBuf {
-        let mut path = PathBuf::from(url.path());
-        if let Some(host) = url.host_str() {
-            if !host.is_empty() {
-                path = PathBuf::from(host).join(url.path());
-            }
+    fn uri_to_path(&self, input: &str) -> PathBuf {
+        // let Ok(url) = Url::parse(input) else {
+        //     return PathBuf::from(input);
+        // };
+
+        let path = match input.strip_prefix("file://") {
+            Some(relative) => PathBuf::from(relative),
+            // If not under CWD, return full path
+            _ => PathBuf::from(input),
+        };
+
+        if path.to_string_lossy().is_empty() {
+            return PathBuf::from("");
         }
+
         path
+        // let mut path = PathBuf::from(url.path());
+        // if let Some(host) = url.host_str() {
+        //     if !host.is_empty() {
+        //         path = PathBuf::from(host).join(url.path());
+        //     }
+        // }
+        // path
     }
+
+    // fn is_url(&self, input: &str) -> bool {
+    //     Url::parse(input).is_ok()
+    // }
 }
 
 impl StorageProvider for LocalFileStorageProvider {
@@ -99,36 +118,97 @@ impl StorageProvider for LocalFileStorageProvider {
         LocalFileStorage::new(url)
     }
 
-    fn list_paths(&self, url: Url) -> Vec<String> {
-        let init_dir = self.uri_to_path(url);
+    fn list_paths(&self, input: &str) -> Vec<String> {
+        // let is_url = crate::storage::str_to_url(input).is_ok();
+        let is_url = Url::parse(input).is_ok();
+
+        // let init_dir = PathBuf::from(input);
+        // let Ok(init_dir) = uri_to_path(Url::parse(input))
+        // let init_dir = self.uri_to_path(url.clone());
+        let init_dir = self.uri_to_path(input);
 
         // Get CWD, return empty on error
-        let Ok(cwd) = std::env::current_dir() else {
-            return vec![];
-        };
+        // let Ok(cwd) = std::env::current_dir() else {
+        //     return vec![];
+        // };
+
+        // eprintln!("DEBUG init_dir 1 {:?}", init_dir);
+
+        // Extract the filename prefix for filtering
+        // let prefix = if init_dir.is_dir() {
+        //     None
+        // } else {
+        //     init_dir.file_name().map(|n| n.to_string_lossy().to_string())
+        // };
+
+        eprintln!("DEBUG init_dir {:?}", init_dir);
+        eprintln!(
+            "DEBUG init_dir match {:?} {:?}",
+            init_dir.is_dir(),
+            init_dir.as_path().parent(),
+        );
 
         let dir = match (init_dir.is_dir(), init_dir.as_path().parent()) {
             (false, Some(parent_dir)) => parent_dir.to_path_buf(),
             _ => init_dir,
         };
 
+        eprintln!("DEBUG dir {:?}", dir);
+
+        // if dir.to_str().is_empty()
+
         // Read directory, return empty on error
-        let Ok(entries) = std::fs::read_dir(&dir) else {
+        // let Ok(entries) = std::fs::read_dir(&dir) else {
+        //     eprintln!("DEBUG dir empty");
+        //     return vec![];
+        // };
+
+        let tmp_entries = match dir.is_dir() {
+            true => std::fs::read_dir(&dir),
+            false => std::fs::read_dir(Path::new(".")),
+        };
+        let Ok(entries) = tmp_entries else {
+            eprintln!("DEBUG dir empty");
             return vec![];
         };
 
+        // let local_entries = std::fs::read_dir(Path::new(".")).unwrap();
+        // let Ok(entries) = std::fs::read_dir(&dir if dir.is_dir() else Path::new(".")) else {
+        //     eprintln!("DEBUG dir empty");
+        //     return vec![];
+        //     // local_entries
+        // };
+
         entries
             .filter_map(|entry| entry.ok())
-            .map(|entry| {
+            .filter_map(|entry| {
                 let full_path = dir.join(entry.file_name());
 
-                // Try to make it relative to CWD
-                if let Ok(relative) = full_path.strip_prefix(&cwd) {
-                    relative.to_string_lossy().to_string()
-                } else {
-                    // If not under CWD, return full path
-                    full_path.to_string_lossy().to_string()
+                let path = full_path.to_string_lossy().to_string();
+                // // Try to make it relative to CWD
+                // let path = match full_path.strip_prefix(&cwd) {
+                //     Ok(relative) => relative.to_string_lossy().to_string(),
+                //     // If not under CWD, return full path
+                //     _ => full_path.to_string_lossy().to_string(),
+                // };
+
+                if is_url == false {
+                    // return path;
+                    return Some(path);
                 }
+
+                // eprintln!("DEBUG path {:?}", path);
+                let raw_url = format!("file://{}", path);
+                match Url::parse(raw_url.as_str()) {
+                    Ok(_) => Some(raw_url),
+                    Err(_) => None,
+                }
+            })
+            .filter(|entry| {
+                // Filter by prefix - what user inputed to date
+                // ZSH is doing this anyway so going to more false positives
+                // ToDo: Consider moving it up a level
+                entry.starts_with(input)
             })
             .sorted()
             .collect()
@@ -260,33 +340,33 @@ mod tests {
 
     #[rstest]
     // Top level - current directory
-    #[case(".", vec![".txt", "1.txt", "2.txt", "a", "x", "z"], "")]
-    #[case("", vec![".txt", "1.txt", "2.txt", "a", "x", "z"], "")]
+    #[case::top_level_with_dot(".", vec!["./.txt", "./1.txt", "./2.txt", "./a", "./x", "./z"], "")]
+    #[case::top_level_empty_string("", vec![".txt", "1.txt", "2.txt", "a", "x", "z"], "")]
     // Partial matches at top level - show top level options
-    #[case("./b", vec![".txt", "1.txt", "2.txt", "a", "x", "z"], "")]
-    #[case("b", vec![".txt", "1.txt", "2.txt", "a", "x", "z"], "")]
-    #[case("1.txt", vec![".txt", "1.txt", "2.txt", "a", "x", "z"], "")]
+    #[case::partial_match_dot_slash_b("./b", vec![], "")]
+    #[case::partial_match_b("b", vec![], "")]
+    #[case::exact_filename_match("1.txt", vec!["1.txt"], "")]
     // Subdirectory paths - show contents
-    #[case("./a", vec!["a/a1.txt", "a/a2.txt", "a/b"], "")]
-    #[case("a", vec!["a/a1.txt", "a/a2.txt", "a/b"], "")]
-    #[case("a/b", vec!["a/b/b1.txt", "a/b/b2.txt", "a/b/c", "a/b/d"], "")]
-    #[case("a/b/c", vec!["a/b/c/c1.txt", "a/b/c/c2.txt"], "")]
-    #[case("a/b/d", vec!["a/b/d/e"], "")]
-    #[case("a/b/d/e", vec!["a/b/d/e/e1.txt"], "")]
+    #[case::subdir_a_with_dot_slash("./a", vec!["./a/a1.txt", "./a/a2.txt", "./a/b"], "")]
+    #[case::subdir_a("a", vec!["a/a1.txt", "a/a2.txt", "a/b"], "")]
+    #[case::nested_subdir_a_b("a/b", vec!["a/b/b1.txt", "a/b/b2.txt", "a/b/c", "a/b/d"], "")]
+    #[case::nested_subdir_a_b_c("a/b/c", vec!["a/b/c/c1.txt", "a/b/c/c2.txt"], "")]
+    #[case::nested_subdir_a_b_d("a/b/d", vec!["a/b/d/e"], "")]
+    #[case::deeply_nested_a_b_d_e("a/b/d/e", vec!["a/b/d/e/e1.txt"], "")]
     // Non-existent paths
-    #[case("a/x", vec!["a/a1.txt", "a/a2.txt", "a/b"], "")]
-    #[case("a/x/y", vec![], "")]
+    #[case::nonexistent_subdir_a_x("a/x", vec![], "")]
+    #[case::nonexistent_deep_path("a/x/y", vec![], "")]
     // From subdirectory a/
-    #[case(".", vec!["a1.txt", "a2.txt", "b"], "a/")]
-    #[case("b", vec!["b/b1.txt", "b/b2.txt", "b/c", "b/d"], "a/")]
+    #[case::from_subdir_a_current_dir(".", vec!["./a1.txt", "./a2.txt", "./b"], "a/")]
+    #[case::from_subdir_a_to_b("b", vec!["b/b1.txt", "b/b2.txt", "b/c", "b/d"], "a/")]
     // From subdirectory a/b/
-    #[case(".", vec!["b1.txt", "b2.txt", "c", "d"], "a/b/")]
-    #[case("c", vec!["c/c1.txt", "c/c2.txt"], "a/b/")]
+    #[case::from_subdir_a_b_current_dir(".", vec!["./b1.txt", "./b2.txt", "./c", "./d"], "a/b/")]
+    #[case::from_subdir_a_b_to_c("c", vec!["c/c1.txt", "c/c2.txt"], "a/b/")]
     // Parent directory navigation
-    #[case("..", vec!["../a1.txt", "../a2.txt", "../b"], "a/b/")]
-    #[case("../..", vec!["../../.txt", "../../1.txt", "../../2.txt", "../../a", "../../x", "../../z"], "a/b/")]
-    #[case("../d", vec!["../d/e"], "a/b/c")]
-    #[case("../d/e", vec!["../d/e/e1.txt"], "a/b/c")]
+    #[case::parent_dir_from_a_b("..", vec!["../a1.txt", "../a2.txt", "../b"], "a/b/")]
+    #[case::grandparent_dir_from_a_b("../..", vec!["../../.txt", "../../1.txt", "../../2.txt", "../../a", "../../x", "../../z"], "a/b/")]
+    #[case::parent_sibling_d_from_c("../d", vec!["../d/e"], "a/b/c")]
+    #[case::parent_sibling_nested_from_c("../d/e", vec!["../d/e/e1.txt"], "a/b/c")]
     #[serial]
     fn test_list_paths(
         #[case] prefix: &str,
@@ -299,9 +379,49 @@ mod tests {
         // Change to the subdirectory specified by cwd
         env::set_current_dir(dir.path().join(cwd)).unwrap();
 
-        let url = url::Url::from_file_path(dir.path().join(cwd).join(prefix).as_path()).unwrap();
+        let actual = LocalFileStorageProvider.list_paths(prefix);
 
-        let actual = LocalFileStorageProvider.list_paths(url);
+        // Always restore original directory
+        env::set_current_dir(original_dir).unwrap();
+
+        assert_eq!(actual, expected);
+    }
+
+    #[rstest]
+    // Top level - file:// URLs
+    #[case::url_top_level_empty("file://", vec!["file://.txt", "file://1.txt", "file://2.txt", "file://a", "file://x", "file://z"], "")]
+    #[case::url_top_level_dot_slash("file://./", vec!["file://./.txt", "file://./1.txt", "file://./2.txt", "file://./a", "file://./x", "file://./z"], "")]
+    // Partial matches at top level
+    #[case::url_partial_match_1("file://1", vec!["file://1.txt"], "")]
+    #[case::url_partial_match_dot_slash_1("file://./1", vec!["file://./1.txt"], "")]
+    #[case::url_no_match("file://b", vec![], "")]
+    #[case::url_no_match_dot_slash("file://./b", vec![], "")]
+    // Subdirectory paths
+    #[case::url_subdir_a("file://a", vec!["file://a/a1.txt", "file://a/a2.txt", "file://a/b"], "")]
+    #[case::url_subdir_a_slash("file://a/", vec!["file://a/a1.txt", "file://a/a2.txt", "file://a/b"], "")]
+    #[case::url_subdir_dot_slash_a("file://./a", vec!["file://./a/a1.txt", "file://./a/a2.txt", "file://./a/b"], "")]
+    #[case::url_nested_a_b("file://a/b", vec!["file://a/b/b1.txt", "file://a/b/b2.txt", "file://a/b/c", "file://a/b/d"], "")]
+    #[case::url_nested_a_b_c("file://a/b/c", vec!["file://a/b/c/c1.txt", "file://a/b/c/c2.txt"], "")]
+    // From subdirectory
+    #[case::url_from_subdir_a_current("file://.", vec!["file://./a1.txt", "file://./a2.txt", "file://./b"], "a/")]
+    #[case::url_from_subdir_a_to_b("file://b", vec!["file://b/b1.txt", "file://b/b2.txt", "file://b/c", "file://b/d"], "a/")]
+    // Parent directory navigation
+    #[case::url_parent_from_a_b("file://..", vec!["file://../a1.txt", "file://../a2.txt", "file://../b"], "a/b/")]
+    #[case::url_grandparent_from_a_b("file://../..", vec!["file://../../.txt", "file://../../1.txt", "file://../../2.txt", "file://../../a", "file://../../x", "file://../../z"], "a/b/")]
+    #[serial]
+    fn test_list_paths_with_file_urls(
+        #[case] prefix: &str,
+        #[case] expected: Vec<&str>,
+        #[case] cwd: &str,
+        #[from(create_test_file_structure)] dir: TempDir,
+    ) {
+        let original_dir = env::current_dir().unwrap();
+
+        // Change to the subdirectory specified by cwd
+        env::set_current_dir(dir.path().join(cwd)).unwrap();
+
+        println!("URL PREFIX: {prefix}");
+        let actual = LocalFileStorageProvider.list_paths(prefix);
 
         // Always restore original directory
         env::set_current_dir(original_dir).unwrap();
