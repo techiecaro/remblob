@@ -5,6 +5,9 @@ mod storage;
 use clap::Parser;
 use cli::Cli;
 
+#[cfg(test)]
+mod test_utils;
+
 fn main() {
     // Handle dynamic completion requests BEFORE parsing
     if Cli::try_complete() {
