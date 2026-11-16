@@ -196,4 +196,48 @@ mod tests {
             }
         }
     }
+
+    // Full flow used by `view`: user input -> str_to_url -> storage -> read.
+    // `file_on_disk` is relative to the temp dir; `input_tpl` is what the user types.
+    #[rstest]
+    #[case::relative_space("my file.txt", "my file.txt")]
+    #[case::scheme_space("file://my file.txt", "my file.txt")]
+    #[case::uppercase_scheme_space("FILE://my file.txt", "my file.txt")]
+    #[case::single_slash_absolute_space("file:<CWD>/my file.txt", "my file.txt")]
+    #[case::scheme_absolute_space("file://<CWD>/my file.txt", "my file.txt")]
+    #[case::nested_space("sub dir/my file.txt", "sub dir/my file.txt")]
+    #[case::scheme_nested_space("file://sub dir/my file.txt", "sub dir/my file.txt")]
+    #[case::relative_percent("50%.txt", "50%.txt")]
+    #[case::scheme_percent("file://50%.txt", "50%.txt")]
+    #[case::scheme_percent_escape_lookalike("file://%41.txt", "%41.txt")]
+    #[case::scheme_hash("file://a#b.txt", "a#b.txt")]
+    #[case::scheme_question_mark("file://q?x.txt", "q?x.txt")]
+    #[case::scheme_uppercase_name("file://Dummy.txt", "Dummy.txt")]
+    #[case::scheme_non_ascii("file://Zażółć.txt", "Zażółć.txt")]
+    #[serial]
+    fn test_read_through_str_to_url(
+        #[case] input_tpl: &str,
+        #[case] file_on_disk: &str,
+        #[from(temp_dir)] dir: TempDir,
+    ) {
+        let _guard = CwdGuard {
+            cwd: env::current_dir().unwrap(),
+        };
+        let full_cwd = dir.path();
+        env::set_current_dir(full_cwd).unwrap();
+
+        let content = "test content";
+        let disk_path = full_cwd.join(file_on_disk);
+        std::fs::create_dir_all(disk_path.parent().unwrap()).unwrap();
+        std::fs::write(&disk_path, content).unwrap();
+
+        let input = input_tpl.replace("<CWD>", &full_cwd.to_string_lossy());
+        let url = str_to_url(&input).unwrap();
+        let mut storage = get_file_storage(url).unwrap();
+
+        let mut actual = String::new();
+        storage.read_to_string(&mut actual).unwrap();
+
+        assert_eq!(actual, content);
+    }
 }

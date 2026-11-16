@@ -24,10 +24,19 @@ enum FileMode {
 impl LocalFileStorage {
     fn ensure_read_mode(&mut self) -> std::io::Result<&mut File> {
         if self.mode != FileMode::Reading {
-            self.file = Some(OpenOptions::new().read(true).open(self.url.path())?);
+            self.file = Some(OpenOptions::new().read(true).open(self.safe_path()?)?);
             self.mode = FileMode::Reading;
         }
         Ok(self.file.as_mut().unwrap())
+    }
+
+    fn safe_path(&self) -> std::io::Result<PathBuf> {
+        self.url.to_file_path().map_err(|_| {
+            std::io::Error::new(
+                std::io::ErrorKind::InvalidInput,
+                format!("Could not convert to file path: {}", self.url),
+            )
+        })
     }
 
     fn ensure_write_mode(&mut self) -> std::io::Result<&mut File> {
@@ -37,7 +46,7 @@ impl LocalFileStorage {
                     .write(true)
                     .create(true)
                     .truncate(true)
-                    .open(self.url.path())?,
+                    .open(self.safe_path()?)?,
             );
             self.mode = FileMode::Writing;
         }
@@ -70,6 +79,9 @@ impl std::io::Write for LocalFileStorage {
         file.write(buf)
     }
 
+    // ToDo: flush must not open the file for writing. ensure_write_mode truncates,
+    //       so flushing before any write (or after reading) empties/creates the file.
+    //       See test_flush_does_not_modify_file.
     fn flush(&mut self) -> std::io::Result<()> {
         let file = self.ensure_write_mode()?;
         file.flush()
@@ -192,7 +204,7 @@ impl StorageProvider for LocalFileStorageProvider {
                 //     _ => full_path.to_string_lossy().to_string(),
                 // };
 
-                if is_url == false {
+                if !is_url {
                     // return path;
                     return Some(path);
                 }
@@ -228,10 +240,20 @@ mod tests {
 
     use super::*;
 
-    #[test]
-    fn test_read_success() {
+    // File names whose URL form differs from the name on disk
+    // (escaped characters, case, non-ASCII), plus a plain baseline.
+    #[rstest]
+    #[case::plain("foo.txt")]
+    #[case::uppercase("Dummy.txt")]
+    #[case::space("foo bar.txt")]
+    #[case::percent("50%.txt")]
+    #[case::percent_escape_lookalike("%41.txt")]
+    #[case::hash("a#b.txt")]
+    #[case::question_mark("q?x.txt")]
+    #[case::non_ascii("Zażółć.txt")]
+    fn test_read_success(#[case] file_name: &str) {
         let content = "test content";
-        let tempfile = NamedTempFile::new("foo.txt").unwrap();
+        let tempfile = NamedTempFile::new(file_name).unwrap();
         tempfile.write_str(content).unwrap();
         let url = Url::from_file_path(tempfile.path()).unwrap();
 
@@ -254,10 +276,18 @@ mod tests {
         assert_eq!(result.unwrap_err().kind(), std::io::ErrorKind::NotFound);
     }
 
-    #[test]
-    fn test_write_success_file_does_not_exist() {
+    #[rstest]
+    #[case::plain("foo.txt")]
+    #[case::uppercase("Dummy.txt")]
+    #[case::space("foo bar.txt")]
+    #[case::percent("50%.txt")]
+    #[case::percent_escape_lookalike("%41.txt")]
+    #[case::hash("a#b.txt")]
+    #[case::question_mark("q?x.txt")]
+    #[case::non_ascii("Zażółć.txt")]
+    fn test_write_success_file_does_not_exist(#[case] file_name: &str) {
         let content = "test content";
-        let tempfile = NamedTempFile::new("foo.txt").unwrap();
+        let tempfile = NamedTempFile::new(file_name).unwrap();
         tempfile.assert(predicates::path::missing());
 
         let url = Url::from_file_path(tempfile.path()).unwrap();
@@ -267,6 +297,29 @@ mod tests {
         storage.write_all(content.as_bytes()).unwrap();
 
         tempfile.assert(predicates::path::exists());
+        tempfile.assert(content);
+    }
+
+    // Known bug: flush currently truncates the file (see ToDo on `flush`).
+    // Run with `cargo test -- --ignored` to see it fail; remove #[ignore] once fixed.
+    #[rstest]
+    #[case::flush_without_io(false)]
+    #[case::flush_after_read(true)]
+    #[ignore = "flush truncates the file - see ToDo on LocalFileStorage::flush"]
+    fn test_flush_does_not_modify_file(#[case] read_first: bool) {
+        let content = "test content";
+        let tempfile = NamedTempFile::new("foo.txt").unwrap();
+        tempfile.write_str(content).unwrap();
+        let url = Url::from_file_path(tempfile.path()).unwrap();
+
+        let mut storage = LocalFileStorageProvider.create(url).unwrap();
+
+        if read_first {
+            let mut actual = String::new();
+            storage.read_to_string(&mut actual).unwrap();
+        }
+        storage.flush().unwrap();
+
         tempfile.assert(content);
     }
 

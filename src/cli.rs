@@ -1,9 +1,9 @@
-use crate::completion::{path_completer, ZshNospace};
+use crate::completion::{ZshNospace, path_completer};
 use crate::storage::{get_file_storage, str_to_url};
 use clap::{Args, CommandFactory, Parser, Subcommand};
+use clap_complete::CompleteEnv;
 use clap_complete::engine::ArgValueCompleter;
 use clap_complete::env::EnvCompleter;
-use clap_complete::CompleteEnv;
 use url::Url;
 
 #[derive(Debug, Parser)]
@@ -129,8 +129,7 @@ impl CompletionsCmd {
             std::env::set_var("COMPLETE", self.shell.clone());
         }
 
-        let complete_env = CompleteEnv::with_factory(Cli::command)
-            .shells(shells);
+        let complete_env = CompleteEnv::with_factory(Cli::command).shells(shells);
 
         complete_env.complete();
         Ok(())
