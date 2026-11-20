@@ -1,5 +1,5 @@
 use crate::completion::{ZshNospace, path_completer};
-use crate::storage::{get_file_storage, str_to_url};
+use crate::storage::{get_file_storage, str_to_file_url};
 use clap::{Args, CommandFactory, Parser, Subcommand};
 use clap_complete::CompleteEnv;
 use clap_complete::engine::ArgValueCompleter;
@@ -56,11 +56,11 @@ impl Commands {
 #[derive(Debug, Args)]
 struct EditCmd {
     /// Location of the file to edit.
-    #[arg(value_parser = str_to_url)]
+    #[arg(value_parser = str_to_file_url)]
     source_path: Url,
 
     /// Final location of the edited file, if different.
-    #[arg(value_parser = str_to_url)]
+    #[arg(value_parser = str_to_file_url)]
     destination_path: Option<Url>,
 }
 
@@ -82,7 +82,7 @@ impl EditCmd {
 #[derive(Debug, Args)]
 struct ViewCmd {
     /// Location of the file to view.
-    #[arg(value_parser = str_to_url, add = ArgValueCompleter::new(path_completer))]
+    #[arg(value_parser = str_to_file_url, add = ArgValueCompleter::new(path_completer))]
     source_path: Url,
 }
 

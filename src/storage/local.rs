@@ -193,28 +193,15 @@ impl StorageProvider for LocalFileStorageProvider {
 
         entries
             .filter_map(|entry| entry.ok())
-            .filter_map(|entry| {
+            .map(|entry| {
                 let full_path = dir.join(entry.file_name());
-
                 let path = full_path.to_string_lossy().to_string();
-                // // Try to make it relative to CWD
-                // let path = match full_path.strip_prefix(&cwd) {
-                //     Ok(relative) => relative.to_string_lossy().to_string(),
-                //     // If not under CWD, return full path
-                //     _ => full_path.to_string_lossy().to_string(),
-                // };
 
                 if !is_url {
-                    // return path;
-                    return Some(path);
+                    return path;
                 }
 
-                // eprintln!("DEBUG path {:?}", path);
-                let raw_url = format!("file://{}", path);
-                match Url::parse(raw_url.as_str()) {
-                    Ok(_) => Some(raw_url),
-                    Err(_) => None,
-                }
+                format!("file://{}", path)
             })
             .filter(|entry| {
                 // Filter by prefix - what user inputed to date
@@ -231,6 +218,7 @@ impl StorageProvider for LocalFileStorageProvider {
 mod tests {
     use std::env;
 
+    use crate::test_utils::create_file_structure;
     use assert_fs::assert::PathAssert;
     use assert_fs::fixture::FileWriteStr;
     use assert_fs::{NamedTempFile, TempDir};
@@ -380,15 +368,7 @@ mod tests {
 
     #[fixture]
     fn create_test_file_structure() -> TempDir {
-        let dir = TempDir::new().unwrap();
-
-        for file in FILES {
-            let full_path = dir.join(file);
-            std::fs::create_dir_all(full_path.as_path().parent().unwrap()).unwrap();
-            std::fs::File::create_new(full_path).unwrap();
-        }
-
-        dir
+        create_file_structure(FILES)
     }
 
     #[rstest]

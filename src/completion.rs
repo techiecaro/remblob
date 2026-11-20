@@ -36,15 +36,6 @@ pub fn path_completer(current: &std::ffi::OsStr) -> Vec<CompletionCandidate> {
         .map(|s| CompletionCandidate::new(format!("{s}://")).hide(false))
         .collect();
 
-    // if current_str.is_empty() {
-    //     return schemes;
-    // }
-
-    let Ok(url) = crate::storage::str_to_url(current_str) else {
-        return schemes;
-    };
-
-    eprintln!("DEBUG url {}", url);
     eprintln!("DEBUG str {:?}", current_str);
 
     let Ok(paths) = crate::storage::list_paths_for_url(current_str) else {
@@ -149,5 +140,83 @@ compdef _clap_dynamic_completer_NAME BIN"#
     ) -> Result<(), std::io::Error> {
         // Delegate to default implementation
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::test_utils::{CwdGuard, create_file_structure};
+    use assert_fs::TempDir;
+    use rstest::*;
+    use serial_test::serial;
+    use std::env;
+    use std::ffi::OsStr;
+
+    use super::*;
+
+    const FILES: &[&str] = &[
+        "1.txt",
+        "2.txt",
+        ".txt",
+        "my file.txt",
+        "myfile.txt",
+        "a/a1.txt",
+        "a/a2.txt",
+        "a/my file.txt",
+        "a/myfile.txt",
+        "a/b/b1.txt",
+        "a/b/b2.txt",
+        "a/b/c/c1.txt",
+        "a/b/c/c2.txt",
+        "a/b/d/e/e1.txt",
+        "x",
+        "z",
+        "dir/d1.txt",
+        "dir/d2.txt",
+        "Dummy.txt",
+        "Dummy1.txt",
+        "Dummy2.txt",
+    ];
+
+    #[fixture]
+    fn create_test_file_structure() -> TempDir {
+        create_file_structure(FILES)
+    }
+
+    // Candidates come back sorted by byte value: '.' < digits < uppercase < lowercase,
+    // and a space sorts before letters ("my file.txt" < "myfile.txt").
+    // The scheme list ("file://") is always appended at the end.
+    #[rstest]
+    // Empty input / bare scheme - list the current directory
+    #[case::local_empty("", vec![".txt", "1.txt", "2.txt", "Dummy.txt", "Dummy1.txt", "Dummy2.txt", "a", "dir", "my file.txt", "myfile.txt", "x", "z", "file://"])]
+    #[case::local_file_empty("file://", vec!["file://.txt", "file://1.txt", "file://2.txt", "file://Dummy.txt", "file://Dummy1.txt", "file://Dummy2.txt", "file://a", "file://dir", "file://my file.txt", "file://myfile.txt", "file://x", "file://z", "file://"])]
+    #[case::local_m("m", vec!["my file.txt", "myfile.txt", "file://"])]
+    #[case::local_file_m("file://m", vec!["file://my file.txt", "file://myfile.txt", "file://"])]
+    #[case::local_file_a("file://a", vec!["file://a/a1.txt", "file://a/a2.txt", "file://a/b", "file://a/my file.txt", "file://a/myfile.txt", "file://"])]
+    // Directory with trailing separator - list its contents
+    #[case::local_dir_slash("a/", vec!["a/a1.txt", "a/a2.txt", "a/b", "a/my file.txt", "a/myfile.txt", "file://"])]
+    #[case::local_file_dir_slash("file://a/", vec!["file://a/a1.txt", "file://a/a2.txt", "file://a/b", "file://a/my file.txt", "file://a/myfile.txt", "file://"])]
+    #[case::local_file_d("file://d", vec!["file://dir", "file://"])]
+    #[case::local_file_cap_d("file://D", vec!["file://Dummy.txt", "file://Dummy1.txt", "file://Dummy2.txt", "file://"])]
+    #[serial]
+    fn test_path_completer(
+        #[case] input: &str,
+        #[case] expected: Vec<&str>,
+        #[from(create_test_file_structure)] dir: TempDir,
+    ) {
+        let _guard = CwdGuard {
+            cwd: env::current_dir().unwrap(),
+        };
+
+        // Run from inside the temp directory so relative paths resolve against it
+        env::set_current_dir(dir.path()).unwrap();
+
+        let candidates = path_completer(OsStr::new(input));
+        let candidates_values: Vec<String> = candidates
+            .iter()
+            .map(|c| c.get_value().to_str().unwrap().to_string())
+            .collect();
+
+        assert_eq!(candidates_values, expected);
     }
 }

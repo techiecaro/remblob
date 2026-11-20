@@ -1,7 +1,9 @@
 use std::{collections::HashMap, sync::RwLock};
 
+// ToDo: Switch to std::sync::LazyLock (stable since Rust 1.80) and drop the once_cell
+//       dependency. Used by STORAGE_REGISTRY and FILE_SCHEME_REGEX.
 use once_cell::sync::Lazy;
-use regex::RegexBuilder;
+use regex::{Regex, RegexBuilder};
 use std::path::{MAIN_SEPARATOR, Path, PathBuf};
 use url::{ParseError, Url};
 
@@ -13,6 +15,12 @@ pub trait StorageProvider: Send + Sync {
     fn scheme(&self) -> String;
     fn create(&self, url: Url) -> Result<Box<dyn FileStorage>, Box<dyn std::error::Error>>;
     fn list_paths(&self, input: &str) -> Vec<String>;
+}
+
+#[derive(PartialEq)]
+pub enum Target {
+    File,
+    FileOrDirectory,
 }
 
 // ToDo: Once view and edit work, verify whether RwLock (and Lazy) are still needed.
@@ -59,7 +67,7 @@ pub fn list_schemas() -> Result<Vec<String>, Box<dyn std::error::Error>> {
 pub fn list_paths_for_url(input: &str) -> Result<Vec<String>, Box<dyn std::error::Error>> {
     Lazy::force(&STORAGE_REGISTRY);
 
-    let url = str_to_url(input)?;
+    let url = str_to_url(input, Target::FileOrDirectory)?;
     let scheme = url.scheme();
 
     let registry = STORAGE_REGISTRY
@@ -73,7 +81,7 @@ pub fn list_paths_for_url(input: &str) -> Result<Vec<String>, Box<dyn std::error
     Ok(provider.list_paths(input))
 }
 
-fn to_absolute_local(path: &str) -> Result<Url, String> {
+fn to_absolute_local(path: &str, target: Target) -> Result<Url, String> {
     let absolute_path = if Path::new(path).is_absolute() {
         PathBuf::from(path)
     } else {
@@ -83,31 +91,42 @@ fn to_absolute_local(path: &str) -> Result<Url, String> {
     };
 
     if absolute_path.to_string_lossy().ends_with(MAIN_SEPARATOR) {
-        return Err("Path should point to a file".to_string());
+        if target != Target::FileOrDirectory {
+            return Err("Path should point to a file".to_string());
+        }
+        return Url::from_directory_path(absolute_path)
+            .map_err(|_| "Failed to create directory URL".to_string());
     }
 
     Url::from_file_path(absolute_path).map_err(|_| "Failed to create file URL".to_string())
 }
 
-pub fn str_to_url(input: &str) -> Result<Url, String> {
-    let file_schema_regex = RegexBuilder::new(r"^file:(?://)?(?<path>.*)")
+// Built once on first use; str_to_url runs per completion candidate, so rebuilding is costly.
+static FILE_SCHEME_REGEX: Lazy<Regex> = Lazy::new(|| {
+    RegexBuilder::new(r"^file:(?://)?(?<path>.*)")
         .case_insensitive(true)
         .build()
-        .expect("File schema should be valid");
+        .expect("File schema should be valid")
+});
 
-    if let Some(cap) = file_schema_regex.captures(input) {
+pub fn str_to_url(input: &str, target: Target) -> Result<Url, String> {
+    if let Some(cap) = FILE_SCHEME_REGEX.captures(input) {
         let file_path = cap
             .name("path")
             .expect("Should exist, or it will not match")
             .as_str();
-        return to_absolute_local(file_path);
+        return to_absolute_local(file_path, target);
     }
 
     match Url::parse(input) {
         Ok(url) => Ok(url),
-        Err(ParseError::RelativeUrlWithoutBase) => to_absolute_local(input),
+        Err(ParseError::RelativeUrlWithoutBase) => to_absolute_local(input, target),
         Err(other) => Err(other.to_string()),
     }
+}
+
+pub fn str_to_file_url(input: &str) -> Result<Url, String> {
+    str_to_url(input, Target::File)
 }
 
 #[cfg(test)]
@@ -149,11 +168,6 @@ mod tests {
     #[case::local_single_slash_absolute("file:<CWD>/Dummy.txt", "file://<CWD>/Dummy.txt", "")]
     #[case::local_no_slash_relative("file:Dummy.txt", "file://<CWD>/Dummy.txt", "")]
     #[case::local_no_slash_shorter_than_prefix("file:x", "file://<CWD>/x", "")]
-    // Scheme only - resolves to the current directory, which is rejected (not a file)
-    #[case::local_scheme_only("file://", "", "Path should point to a file")]
-    // Filesystem root
-    #[case::local_root_no_scheme("/", "", "Path should point to a file")]
-    #[case::local_root_with_scheme("file:///", "", "Path should point to a file")]
     // Spaces must be percent-encoded in the URL
     #[case::local_space_no_scheme("my file.txt", "file://<CWD>/my%20file.txt", "")]
     #[case::local_space_with_scheme("file://my file.txt", "file://<CWD>/my%20file.txt", "")]
@@ -169,11 +183,13 @@ mod tests {
     #[case::s3_key_containing_file_scheme("s3://bucket/file:x", "s3://bucket/file:x", "")]
     #[case::local_relative_containing_file_scheme("dir/file:x", "file://<CWD>/dir/file:x", "")]
     #[case::s3_with_space("s3://bucket/my file.txt", "s3://bucket/my%20file.txt", "")]
+    // No trailing separator, so the target makes no difference: every case runs with both.
     #[serial]
     fn test_str_to_url(
         #[case] input_tpl: &str,
         #[case] expected_tpl: &str,
         #[case] error: &str,
+        #[values(Target::File, Target::FileOrDirectory)] target: Target,
         #[from(temp_dir)] dir: TempDir,
     ) {
         let _guard = CwdGuard {
@@ -187,7 +203,66 @@ mod tests {
         let input = input_tpl.replace("<CWD>", &full_cwd.to_string_lossy());
         let expected = expected_tpl.replace("<CWD>", &full_cwd.to_string_lossy());
 
-        match str_to_url(&input) {
+        match str_to_url(&input, target) {
+            Ok(actual) => {
+                assert_eq!(actual.to_string(), expected);
+            }
+            Err(err) => {
+                assert_eq!(err, error);
+            }
+        }
+    }
+
+    // Inputs ending with a separator: rejected for Target::File,
+    // turned into a directory URL (with trailing "/") for Target::FileOrDirectory.
+    #[rstest]
+    // Scheme only - resolves to the current directory
+    #[case::scheme_only_file("file://", Target::File, "", "Path should point to a file")]
+    #[case::scheme_only_dir("file://", Target::FileOrDirectory, "file://<CWD>/", "")]
+    // Filesystem root
+    #[case::root_no_scheme_file("/", Target::File, "", "Path should point to a file")]
+    #[case::root_no_scheme_dir("/", Target::FileOrDirectory, "file:///", "")]
+    #[case::root_with_scheme_file("file:///", Target::File, "", "Path should point to a file")]
+    #[case::root_with_scheme_dir("file:///", Target::FileOrDirectory, "file:///", "")]
+    // Relative directory
+    #[case::relative_no_scheme_file("a/", Target::File, "", "Path should point to a file")]
+    #[case::relative_no_scheme_dir("a/", Target::FileOrDirectory, "file://<CWD>/a/", "")]
+    #[case::relative_with_scheme_file("file://a/", Target::File, "", "Path should point to a file")]
+    #[case::relative_with_scheme_dir("file://a/", Target::FileOrDirectory, "file://<CWD>/a/", "")]
+    #[case::relative_uppercase_scheme_dir("FILE://a/", Target::FileOrDirectory, "file://<CWD>/a/", "")]
+    #[case::relative_nested_dir("file://a/b/", Target::FileOrDirectory, "file://<CWD>/a/b/", "")]
+    #[case::relative_dot_dir("./", Target::FileOrDirectory, "file://<CWD>/", "")]
+    // Absolute directory
+    #[case::absolute_no_scheme_dir("<CWD>/a/", Target::FileOrDirectory, "file://<CWD>/a/", "")]
+    #[case::absolute_single_slash_dir("file:<CWD>/a/", Target::FileOrDirectory, "file://<CWD>/a/", "")]
+    #[case::absolute_with_scheme_dir("file://<CWD>/a/", Target::FileOrDirectory, "file://<CWD>/a/", "")]
+    // Directory name that needs escaping
+    #[case::space_dir("file://my dir/", Target::FileOrDirectory, "file://<CWD>/my%20dir/", "")]
+    // The check is on the trailing separator, not the filesystem:
+    // "a" without "/" is treated as a file path for both targets.
+    #[case::no_trailing_separator_file("file://a", Target::File, "file://<CWD>/a", "")]
+    #[case::no_trailing_separator_dir("file://a", Target::FileOrDirectory, "file://<CWD>/a", "")]
+    // Non-file schemes are passed through untouched, trailing "/" included
+    #[case::s3_prefix_file("s3://bucket/dir/", Target::File, "s3://bucket/dir/", "")]
+    #[case::s3_prefix_dir("s3://bucket/dir/", Target::FileOrDirectory, "s3://bucket/dir/", "")]
+    #[serial]
+    fn test_str_to_url_trailing_separator(
+        #[case] input_tpl: &str,
+        #[case] target: Target,
+        #[case] expected_tpl: &str,
+        #[case] error: &str,
+        #[from(temp_dir)] dir: TempDir,
+    ) {
+        let _guard = CwdGuard {
+            cwd: env::current_dir().unwrap(),
+        };
+        let full_cwd = dir.path();
+        env::set_current_dir(full_cwd).unwrap();
+
+        let input = input_tpl.replace("<CWD>", &full_cwd.to_string_lossy());
+        let expected = expected_tpl.replace("<CWD>", &full_cwd.to_string_lossy());
+
+        match str_to_url(&input, target) {
             Ok(actual) => {
                 assert_eq!(actual.to_string(), expected);
             }
@@ -214,10 +289,12 @@ mod tests {
     #[case::scheme_question_mark("file://q?x.txt", "q?x.txt")]
     #[case::scheme_uppercase_name("file://Dummy.txt", "Dummy.txt")]
     #[case::scheme_non_ascii("file://Zażółć.txt", "Zażółć.txt")]
+    // Reading a file must work the same whichever target was used to parse it.
     #[serial]
     fn test_read_through_str_to_url(
         #[case] input_tpl: &str,
         #[case] file_on_disk: &str,
+        #[values(Target::File, Target::FileOrDirectory)] target: Target,
         #[from(temp_dir)] dir: TempDir,
     ) {
         let _guard = CwdGuard {
@@ -232,12 +309,47 @@ mod tests {
         std::fs::write(&disk_path, content).unwrap();
 
         let input = input_tpl.replace("<CWD>", &full_cwd.to_string_lossy());
-        let url = str_to_url(&input).unwrap();
+        let url = str_to_url(&input, target).unwrap();
         let mut storage = get_file_storage(url).unwrap();
 
         let mut actual = String::new();
         storage.read_to_string(&mut actual).unwrap();
 
         assert_eq!(actual, content);
+    }
+
+    // A directory URL is accepted by str_to_url (FileOrDirectory) and by storage creation,
+    // but reading it fails with IsADirectory. Documents current behaviour for `view`.
+    #[rstest]
+    #[case::relative_no_scheme("a/", "a")]
+    #[case::relative_with_scheme("file://a/", "a")]
+    #[case::uppercase_scheme("FILE://a/", "a")]
+    #[case::absolute_with_scheme("file://<CWD>/a/", "a")]
+    #[case::space("file://my dir/", "my dir")]
+    #[case::current_dir("file://", "")]
+    #[serial]
+    fn test_read_through_str_to_url_directory(
+        #[case] input_tpl: &str,
+        #[case] dir_on_disk: &str,
+        #[from(temp_dir)] dir: TempDir,
+    ) {
+        let _guard = CwdGuard {
+            cwd: env::current_dir().unwrap(),
+        };
+        let full_cwd = dir.path();
+        env::set_current_dir(full_cwd).unwrap();
+
+        std::fs::create_dir_all(full_cwd.join(dir_on_disk)).unwrap();
+
+        let input = input_tpl.replace("<CWD>", &full_cwd.to_string_lossy());
+        let url = str_to_url(&input, Target::FileOrDirectory).unwrap();
+        let mut storage = get_file_storage(url).unwrap();
+
+        let result = storage.read_to_string(&mut String::new());
+
+        assert_eq!(
+            result.unwrap_err().kind(),
+            std::io::ErrorKind::IsADirectory
+        );
     }
 }
