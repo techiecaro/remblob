@@ -1,0 +1,33 @@
+# Git hooks managed by prek (https://github.com/j178/prek), a Rust drop-in for pre-commit.
+# Setup once per clone:  prek install
+# Run manually:          prek run --all-files
+# Skip for one commit:   git commit --no-verify
+#
+# Commands mirror .github/workflows/ci.yml - keep them in sync.
+default_install_hook_types: [pre-commit, pre-push]
+
+repos:
+  - repo: local
+    hooks:
+      - id: cargo-fmt
+        name: cargo fmt --check
+        entry: cargo fmt --check
+        language: system
+        pass_filenames: false
+        files: \.rs$
+        stages: [pre-commit]
+
+      - id: cargo-clippy
+        name: cargo clippy
+        entry: cargo clippy --all-targets --locked
+        language: system
+        pass_filenames: false
+        files: (\.rs|Cargo\.toml|Cargo\.lock)$
+        stages: [pre-commit]
+
+      - id: cargo-test
+        name: cargo test
+        entry: cargo test --locked
+        language: system
+        pass_filenames: false
+        stages: [pre-push]
