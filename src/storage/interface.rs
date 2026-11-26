@@ -229,15 +229,35 @@ mod tests {
     #[case::relative_no_scheme_dir("a/", Target::FileOrDirectory, "file://<CWD>/a/", "")]
     #[case::relative_with_scheme_file("file://a/", Target::File, "", "Path should point to a file")]
     #[case::relative_with_scheme_dir("file://a/", Target::FileOrDirectory, "file://<CWD>/a/", "")]
-    #[case::relative_uppercase_scheme_dir("FILE://a/", Target::FileOrDirectory, "file://<CWD>/a/", "")]
+    #[case::relative_uppercase_scheme_dir(
+        "FILE://a/",
+        Target::FileOrDirectory,
+        "file://<CWD>/a/",
+        ""
+    )]
     #[case::relative_nested_dir("file://a/b/", Target::FileOrDirectory, "file://<CWD>/a/b/", "")]
     #[case::relative_dot_dir("./", Target::FileOrDirectory, "file://<CWD>/", "")]
     // Absolute directory
     #[case::absolute_no_scheme_dir("<CWD>/a/", Target::FileOrDirectory, "file://<CWD>/a/", "")]
-    #[case::absolute_single_slash_dir("file:<CWD>/a/", Target::FileOrDirectory, "file://<CWD>/a/", "")]
-    #[case::absolute_with_scheme_dir("file://<CWD>/a/", Target::FileOrDirectory, "file://<CWD>/a/", "")]
+    #[case::absolute_single_slash_dir(
+        "file:<CWD>/a/",
+        Target::FileOrDirectory,
+        "file://<CWD>/a/",
+        ""
+    )]
+    #[case::absolute_with_scheme_dir(
+        "file://<CWD>/a/",
+        Target::FileOrDirectory,
+        "file://<CWD>/a/",
+        ""
+    )]
     // Directory name that needs escaping
-    #[case::space_dir("file://my dir/", Target::FileOrDirectory, "file://<CWD>/my%20dir/", "")]
+    #[case::space_dir(
+        "file://my dir/",
+        Target::FileOrDirectory,
+        "file://<CWD>/my%20dir/",
+        ""
+    )]
     // The check is on the trailing separator, not the filesystem:
     // "a" without "/" is treated as a file path for both targets.
     #[case::no_trailing_separator_file("file://a", Target::File, "file://<CWD>/a", "")]
@@ -347,9 +367,6 @@ mod tests {
 
         let result = storage.read_to_string(&mut String::new());
 
-        assert_eq!(
-            result.unwrap_err().kind(),
-            std::io::ErrorKind::IsADirectory
-        );
+        assert_eq!(result.unwrap_err().kind(), std::io::ErrorKind::IsADirectory);
     }
 }

@@ -1,0 +1,36 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Set up Rust
+      uses: dtolnay/rust-toolchain@stable
+      with:
+        components: rustfmt, clippy
+
+    - name: Cache cargo registry and build
+      uses: Swatinem/rust-cache@v2
+
+    - name: Format
+      run: cargo fmt --check
+
+    - name: Build
+      run: cargo build --locked
+
+    - name: Test
+      run: cargo test --locked
+
+    # Not failing on warnings yet: clippy::new_ret_no_self in local.rs is still open (see ToDo.md).
+    # Switch to `cargo clippy --all-targets --locked -- -D warnings` once it is resolved.
+    - name: Clippy
+      run: cargo clippy --all-targets --locked
