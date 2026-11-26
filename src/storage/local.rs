@@ -8,26 +8,28 @@ use url::Url;
 
 use super::interface::{FileStorage, StorageProvider};
 
-struct LocalFileStorage {
-    url: Url,
-    file: Option<File>,
-    mode: FileMode,
+enum State {
+    Closed,
+    Reading(File),
+    Writing(File),
 }
 
-#[derive(PartialEq)]
-enum FileMode {
-    None,
-    Reading,
-    Writing,
+struct LocalFileStorage {
+    url: Url,
+    state: State,
 }
 
 impl LocalFileStorage {
     fn ensure_read_mode(&mut self) -> std::io::Result<&mut File> {
-        if self.mode != FileMode::Reading {
-            self.file = Some(OpenOptions::new().read(true).open(self.safe_path()?)?);
-            self.mode = FileMode::Reading;
+        if !matches!(self.state, State::Reading(_)) {
+            let file = OpenOptions::new().read(true).open(self.safe_path()?)?;
+            self.state = State::Reading(file);
         }
-        Ok(self.file.as_mut().unwrap())
+
+        match &mut self.state {
+            State::Reading(f) => Ok(f),
+            _ => unreachable!("state was set to Reading above"),
+        }
     }
 
     fn safe_path(&self) -> std::io::Result<PathBuf> {
@@ -40,25 +42,25 @@ impl LocalFileStorage {
     }
 
     fn ensure_write_mode(&mut self) -> std::io::Result<&mut File> {
-        if self.mode != FileMode::Writing {
-            self.file = Some(
-                OpenOptions::new()
-                    .write(true)
-                    .create(true)
-                    .truncate(true)
-                    .open(self.safe_path()?)?,
-            );
-            self.mode = FileMode::Writing;
+        if !matches!(self.state, State::Writing(_)) {
+            let file = OpenOptions::new()
+                .write(true)
+                .create(true)
+                .truncate(true)
+                .open(self.safe_path()?)?;
+            self.state = State::Writing(file);
         }
 
-        Ok(self.file.as_mut().unwrap())
+        match &mut self.state {
+            State::Writing(f) => Ok(f),
+            _ => unreachable!("state was set to Writing above"),
+        }
     }
 
     fn new(url: url::Url) -> Result<Box<dyn FileStorage>, Box<dyn std::error::Error>> {
         let storage = LocalFileStorage {
             url,
-            file: None,
-            mode: FileMode::None,
+            state: State::Closed,
         };
         Ok(Box::new(storage))
     }
@@ -79,12 +81,12 @@ impl std::io::Write for LocalFileStorage {
         file.write(buf)
     }
 
-    // ToDo: flush must not open the file for writing. ensure_write_mode truncates,
-    //       so flushing before any write (or after reading) empties/creates the file.
-    //       See test_flush_does_not_modify_file.
     fn flush(&mut self) -> std::io::Result<()> {
-        let file = self.ensure_write_mode()?;
-        file.flush()
+        match &mut self.state {
+            State::Writing(f) => f.flush(),
+            // No-op in non-write mode
+            _ => Ok(()),
+        }
     }
 }
 
@@ -288,12 +290,9 @@ mod tests {
         tempfile.assert(content);
     }
 
-    // Known bug: flush currently truncates the file (see ToDo on `flush`).
-    // Run with `cargo test -- --ignored` to see it fail; remove #[ignore] once fixed.
     #[rstest]
     #[case::flush_without_io(false)]
     #[case::flush_after_read(true)]
-    #[ignore = "flush truncates the file - see ToDo on LocalFileStorage::flush"]
     fn test_flush_does_not_modify_file(#[case] read_first: bool) {
         let content = "test content";
         let tempfile = NamedTempFile::new("foo.txt").unwrap();
